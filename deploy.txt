@@ -2,47 +2,17 @@
    (default value in parenthesis, if applicable):
    - general
      - PYPOMES_APP_PREFIX: used as prefix to all the other variables (PYPOMES)
-   - azure_pomes
-     - <prefix>_AZURE_CONNECTION_STRING
-     - <prefix>_AZURE_STORAGE_BUCKET
-   - crypto_pomes
-     - <prefix>_CRYPTO_HASH_ALGORITHM (sha256)
-   - db_pomes
-     - <prefix>_DB_DRIVER
-     - <prefix>_DB_NAME
-     - <prefix>_DB_HOST
-     - <prefix>_DB_PORT
-     - <prefix>_DB_PWD
-     - <prefix>_DB_USER
-   - email_pomes
-     - <prefix>_EMAIL_ACCOUNT
-     - <prefix>_EMAIL_PWD
-     - <prefix>_EMAIL_PORT
-     - <prefix>_EMAIL_SERVER
-   - ldap_pomes
-     - <prefix>_LDAP_BASE_DN
-     - <prefix>_LDAP_BIND_DN
-     - <prefix>_LDAP_BIND_PWD
-     - <prefix>_LDAP_SERVER_URI
-     - <prefix>_LDAP_TIMEOUT (30)
-     - <prefix>_LDAP_TRACE_FILE (<prefix>_ldap.log in system temporary folder)
-     - <prefix>_LDAP_TRACE_LEVEL (0)
-   - logging_pomes
-     - <prefix>_LOGGING_ID (<prefix>)
-     - <prefix>_LOGGING_FILE (<prefix>.log in system temporary folder)
-     - <prefix>_LOGGING_MODE (a)
-   - minio_pomes
-     - <prefix>_MINIO_BUCKET
-     - <prefix>_MINIO_HOST
-     - <prefix>_MINIO_ACCESS_KEY
-     - <prefix>_MINIO_SECRET_KEY
-     - <prefix>_MINIO_SECURE_ACESS (1)
-     - <prefix>_MINIO_TEMP_PATH (system temporary folder)
+   - security_pomes
+     - <prefix>_SECURITY_TAG_USER_ID
+     - <prefix>_SECURITY_TAG_USER_PWD
+     - <prefix>_SECURITY_URL_GET_TOKEN
+     - <prefix>_SECURITY_USER_ID
+     - <prefix>_SECURITY_USER_PWD
 
 2) one-time actions (https://packaging.python.org/en/latest/tutorials/packaging-projects/):
 - python -m pip install --upgrade pip
 - python -m pip install --upgrade build
-- python3 -m pip install --upgrade twine
+- python -m pip install --upgrade twine
 
 3) move to the project folder, upgrade and upload the project:
 - cd <project-folder>
