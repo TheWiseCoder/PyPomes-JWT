@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypomes_security"
-version = "0.0.4"
+version = "0.0.5"
 authors = [
   { name="GT Nunes", email="wisecoder01@gmail.com" }
 ]
@@ -20,7 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "pip>=23.3.1",
-    "pypomes_core>=0.5.8",
+    "pypomes_core>=0.5.9",
     "setuptools>=68.0.0",
     "wheel>=0.41.0"
 ]

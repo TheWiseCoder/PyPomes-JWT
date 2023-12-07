@@ -3,7 +3,7 @@ import sys
 from datetime import datetime, timedelta
 from logging import Logger
 from pypomes_core import (
-    APP_PREFIX, HTTP_POST_TIMEOUT,
+    APP_PREFIX, HTTP_POST_TIMEOUT, TIMEZONE_LOCAL,
     env_get_str, exc_format
 )
 from requests import Response
@@ -17,7 +17,10 @@ SECURITY_USER_PWD: Final[str] = env_get_str(f"{APP_PREFIX}_SECURITY_USER_PWD")
 
 __access_token: dict = {
     "access_token": None,
-    "expires_in": datetime(2000, 1, 1, 0, 0, 0)
+    "expires_in": datetime(year=2000,
+                           month=1,
+                           day=1,
+                           tzinfo=TIMEZONE_LOCAL)
 }
 
 
@@ -41,19 +44,20 @@ def access_get_token(errors: list[str],
 
         # envia o request REST
         if logger:
-            logger.info(f"Enviando request REST para {SECURITY_URL_GET_TOKEN}: {payload}")
+            logger.info(f"Sending REST request to {SECURITY_URL_GET_TOKEN}: {payload}")
         try:
             response: Response = requests.post(
                 url=SECURITY_URL_GET_TOKEN,
                 json=payload,
                 timeout=timeout
             )
-            reply: dict = {}
+            reply: dict | str
             if response.status_code in [200, 201, 202]:
                 reply = response.json()
                 if logger:
-                    logger.info(f"Token de acesso recebido: {reply}")
-
+                    logger.info(f"Access token obtained: {reply}")
+            else:
+                reply = response.reason
             # o request foi bem sucedido ?
             token: str = reply.get("access_token")
             if token is not None and len(token) > 0:
@@ -64,10 +68,10 @@ def access_get_token(errors: list[str],
                 result = token
             else:
                 # não, reporte o problema
-                err_msg = f"Não foi possível obter token de acesso: {reply}"
+                err_msg = f"Unable to obtain access token: {reply}"
         except Exception as e:
             # a operação resultou em exceção
-            err_msg = f"Erro na solicitação de token: {exc_format(e, sys.exc_info())}"
+            err_msg = f"Error obtaining access token: {exc_format(e, sys.exc_info())}"
 
     if err_msg:
         if logger:
