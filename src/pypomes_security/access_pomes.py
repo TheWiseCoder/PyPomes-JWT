@@ -2,7 +2,10 @@ import requests
 import sys
 from datetime import datetime, timedelta
 from logging import Logger
-from pypomes_core import APP_PREFIX, env_get_str, exc_format
+from pypomes_core import (
+    APP_PREFIX, HTTP_POST_TIMEOUT,
+    env_get_str, exc_format
+)
 from requests import Response
 from typing import Final
 
@@ -18,7 +21,8 @@ __access_token: dict = {
 }
 
 
-def access_get_token(errors: list[str], logger: Logger = None) -> str:
+def access_get_token(errors: list[str],
+                     timeout: int | None = HTTP_POST_TIMEOUT, logger: Logger = None) -> str:
 
     # inicializa a variável de retorno
     result: str | None = None
@@ -41,7 +45,8 @@ def access_get_token(errors: list[str], logger: Logger = None) -> str:
         try:
             response: Response = requests.post(
                 url=SECURITY_URL_GET_TOKEN,
-                data=payload
+                data=payload,
+                timeout=timeout
             )
             reply: dict = {}
             if response.status_code in [200, 201, 202]:
