@@ -26,15 +26,25 @@ __access_token: dict = {
 
 def access_get_token(errors: list[str],
                      timeout: int | None = HTTP_POST_TIMEOUT, logger: Logger = None) -> str:
+    """
+    Obtain and return an access token for further interaction with a protected resource.
 
+    The current token is inspected to determine whether its expiration timestamp requires
+    it to be refreshed.
+
+    :param errors: incidental error messages
+    :param timeout: timeout, in seconds (defaults to HTTP_POST_TIMEOUT - use None to omit)
+    :param logger: optional logger to log the operation with
+    :return: the access token
+    """
     # inicializa a variável de retorno
     result: str | None = None
 
-    agora: datetime = datetime.now()
+    just_now: datetime = datetime.now(TIMEZONE_LOCAL)
     err_msg: str | None = None
 
     # obtem um novo token, se o atual estiver expirado
-    if agora > __access_token["expires_in"]:
+    if just_now > __access_token["expires_in"]:
         # monta o payload do request
         payload: dict = {
             SECURITY_TAG_USER_ID: SECURITY_USER_ID,
@@ -63,7 +73,7 @@ def access_get_token(errors: list[str],
                 # sim, prossiga
                 __access_token["access_token"] = token
                 duration: int = reply.get("expires_in")
-                __access_token["expires_in"] = agora + timedelta(seconds=duration)
+                __access_token["expires_in"] = just_now + timedelta(seconds=duration)
                 result = token
             else:
                 # não, reporte o problema
