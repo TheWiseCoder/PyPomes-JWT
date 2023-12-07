@@ -45,7 +45,7 @@ def access_get_token(errors: list[str],
         try:
             response: Response = requests.post(
                 url=SECURITY_URL_GET_TOKEN,
-                data=payload,
+                json=payload,
                 timeout=timeout
             )
             reply: dict = {}
