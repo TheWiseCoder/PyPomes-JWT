@@ -30,7 +30,6 @@ def access_get_token(errors: list[str],
     # inicializa a variável de retorno
     result: str | None = None
 
-    global __access_token
     agora: datetime = datetime.now()
     err_msg: str | None = None
 
