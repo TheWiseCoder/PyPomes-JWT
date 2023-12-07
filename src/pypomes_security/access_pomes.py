@@ -37,21 +37,24 @@ def access_get_token(errors: list[str],
     :param logger: optional logger to log the operation with
     :return: the access token
     """
-    # inicializa a variável de retorno
+    # inicialize the return variable
     result: str | None = None
 
     just_now: datetime = datetime.now(TIMEZONE_LOCAL)
     err_msg: str | None = None
 
-    # obtem um novo token, se o atual estiver expirado
-    if just_now > __access_token["expires_in"]:
-        # monta o payload do request
+    # is the current token still valid ?
+    if just_now < __access_token["expires_in"]:
+        # yes, return it
+        result = __access_token.get("access_token")
+    else:
+        # no, retrieve a new one
         payload: dict = {
             SECURITY_TAG_USER_ID: SECURITY_USER_ID,
             SECURITY_TAG_USER_PWD: SECURITY_USER_PWD
         }
 
-        # envia o request REST
+        # send the REST request
         if logger:
             logger.info(f"Sending REST request to {SECURITY_URL_GET_TOKEN}: {payload}")
         try:
@@ -67,19 +70,19 @@ def access_get_token(errors: list[str],
                     logger.info(f"Access token obtained: {reply}")
             else:
                 reply = response.reason
-            # o request foi bem sucedido ?
+            # has the request succeeded ?
             token: str = reply.get("access_token")
             if token is not None and len(token) > 0:
-                # sim, prossiga
+                # yes, proceed
                 __access_token["access_token"] = token
                 duration: int = reply.get("expires_in")
                 __access_token["expires_in"] = just_now + timedelta(seconds=duration)
                 result = token
             else:
-                # não, reporte o problema
+                # não, report the problem
                 err_msg = f"Unable to obtain access token: {reply}"
         except Exception as e:
-            # a operação resultou em exceção
+            # the operation raised an exception
             err_msg = f"Error obtaining access token: {exc_format(e, sys.exc_info())}"
 
     if err_msg:
