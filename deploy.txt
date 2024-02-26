@@ -19,4 +19,4 @@
 - del dist\* /q
 - python -m build
 - dir dist
-- python -m twine upload dist/*
+- python -m twine upload -u __token__ -p  "pypi-AgEIcHlwaS5vcmcCJDI4YzBhN2ViLWUwZDEtNGEyYy05YmNlLTI2YTIzNzNiMzdiYwACKlszLCIxNmEwMDU2Ny02NGE4LTQ3YjQtODcxNy04YjIxNzQ1ZGE4MDgiXQAABiBjsVoxPAqp70ZCdap-2sN8yVg8Z3o9G5IiNKSqtrQF_Q" dist/*
