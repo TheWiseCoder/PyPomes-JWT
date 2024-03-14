@@ -33,9 +33,9 @@ SECURITY_USER_PWD: str = env_get_str(f"{APP_PREFIX}_SECURITY_USER_PWD")
 __access_tokens: dict = {}
 
 
-def access_set_url_data(service_url: str,
-                        user_id: str, user_pwd: str,
-                        key_user_id: str, key_user_pwd: str) -> None:
+def access_set_parameters(service_url: str,
+                          user_id: str, user_pwd: str,
+                          key_user_id: str, key_user_pwd: str) -> None:
     """
     Set the parameters to use in the service invocation to obtain the access token for *service_url*.
 
@@ -64,7 +64,7 @@ def access_set_url_data(service_url: str,
     __access_tokens[service_url] = url_token_data
 
 
-def access_remove_url_data(service_url: str) -> dict:
+def access_clear_parameters(service_url: str) -> dict:
     """
     Remove from storage and return the parameters associated with *service_url*.
 
@@ -175,9 +175,9 @@ def __get_url_token_data(service_url: str) -> dict:
     # no data found for URL, but environment data matches it ?
     if not result and service_url == SECURITY_URL_GET_TOKEN:
         # yes, store the data
-        access_set_url_data(service_url,
-                            SECURITY_USER_ID, SECURITY_USER_PWD,
-                            SECURITY_KEY_USER_ID, SECURITY_KEY_USER_PWD)
+        access_set_parameters(service_url,
+                              SECURITY_USER_ID, SECURITY_USER_PWD,
+                              SECURITY_KEY_USER_ID, SECURITY_KEY_USER_PWD)
         result: dict = __access_tokens.get(service_url)
 
     return result
