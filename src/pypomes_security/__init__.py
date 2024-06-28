@@ -1,13 +1,9 @@
 from .access_pomes import (
-    SECURITY_KEY_USER_ID, SECURITY_KEY_USER_PWD,
-    SECURITY_URL_GET_TOKEN, SECURITY_USER_ID, SECURITY_USER_PWD,
     access_set_parameters, access_clear_parameters, access_get_token,
 )
 
 __all__ = [
     # access_pomes
-    "SECURITY_KEY_USER_ID", "SECURITY_KEY_USER_PWD",
-    "SECURITY_URL_GET_TOKEN", "SECURITY_USER_ID", "SECURITY_USER_PWD",
     "access_set_parameters", "access_clear_parameters", "access_get_token",
 ]
 

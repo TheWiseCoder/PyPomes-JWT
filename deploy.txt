@@ -1,20 +1,9 @@
-1) define the following environment variables, for modules in use
-   (default value in parenthesis, if applicable):
-   - general
-     - PYPOMES_APP_PREFIX: used as prefix to all the other variables (PYPOMES)
-   - security_pomes
-     - <prefix>_SECURITY_TAG_USER_ID
-     - <prefix>_SECURITY_TAG_USER_PWD
-     - <prefix>_SECURITY_URL_GET_TOKEN
-     - <prefix>_SECURITY_USER_ID
-     - <prefix>_SECURITY_USER_PWD
-
-2) one-time actions (https://packaging.python.org/en/latest/tutorials/packaging-projects/):
+1) one-time actions (https://packaging.python.org/en/latest/tutorials/packaging-projects/):
 - python -m pip install --upgrade pip
 - python -m pip install --upgrade build
 - python -m pip install --upgrade twine
 
-3) move to the project folder, upgrade and upload the project:
+2) move to the project folder, upgrade and upload the project:
 - cd <project-folder>
 - del dist\* /q
 - python -m build

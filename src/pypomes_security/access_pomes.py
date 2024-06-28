@@ -2,17 +2,9 @@ import requests
 import sys
 from datetime import datetime, timedelta
 from logging import Logger
-from pypomes_core import (
-    APP_PREFIX, TIMEZONE_LOCAL,
-    env_get_str, exc_format
-)
+from pypomes_core import TIMEZONE_LOCAL, exc_format
 from requests import Response
-
-SECURITY_KEY_USER_ID: str = env_get_str(f"{APP_PREFIX}_SECURITY_TAG_USER_ID")
-SECURITY_KEY_USER_PWD: str = env_get_str(f"{APP_PREFIX}_SECURITY_TAG_USER_PWD")
-SECURITY_URL_GET_TOKEN: str = env_get_str(f"{APP_PREFIX}_SECURITY_URL_GET_TOKEN")
-SECURITY_USER_ID: str = env_get_str(f"{APP_PREFIX}_SECURITY_USER_ID")
-SECURITY_USER_PWD: str = env_get_str(f"{APP_PREFIX}_SECURITY_USER_PWD")
+from typing import Any
 
 
 # initial data for <access_url> in '__access_tokens':
@@ -30,16 +22,16 @@ SECURITY_USER_PWD: str = env_get_str(f"{APP_PREFIX}_SECURITY_USER_PWD")
 #   },
 #   ...
 # }
-__access_tokens: dict = {}
+__access_tokens: dict[str, dict[str, Any]] = {}
 
 
 def access_set_parameters(service_url: str,
-                          user_id: str, user_pwd: str,
-                          key_user_id: str, key_user_pwd: str) -> None:
+                          user_id: str,
+                          user_pwd: str,
+                          key_user_id: str,
+                          key_user_pwd: str) -> None:
     """
     Set the parameters to use in the service invocation to obtain the access token for *service_url*.
-
-    Note that one set of parameters can optionally be provided as environment variables.
 
     :param service_url: the reference URL for obtaining the access token
     :param user_id: id of user in request
@@ -48,7 +40,7 @@ def access_set_parameters(service_url: str,
     :param key_user_pwd: key for sending user password in request
     """
     # build the access token structure
-    url_token_data: dict = {
+    url_token_data: dict[str, Any] = {
         "token": None,
         "expiration": datetime(year=2000,
                                month=1,
@@ -64,17 +56,33 @@ def access_set_parameters(service_url: str,
     __access_tokens[service_url] = url_token_data
 
 
-def access_clear_parameters(service_url: str) -> dict:
+def access_clear_parameters(service_url: str,
+                            logger: Logger = None) -> dict[str, Any]:
     """
     Remove from storage and return the parameters associated with *service_url*.
 
     :param service_url: the reference URL
+    :param logger: optional logger to log the operation with
+    :return: the removed parameters, or 'None' if they were not found
     """
-    return __access_tokens.pop(service_url)
+    # initialize the return variable
+    result: dict[str, Any] | None = None
+
+    if logger:
+        logger.debug(f"Access token data clear requested for '{service_url}'")
+
+    if hasattr(__access_tokens, service_url):
+        result = __access_tokens.pop(service_url)
+        if logger:
+            logger.debug(f"Access token data cleared for '{service_url}'")
+
+    return result
 
 
-def access_get_token(errors: list[str], service_url: str,
-                     timeout: int | None = None, logger: Logger = None) -> str:
+def access_get_token(errors: list[str],
+                     service_url: str,
+                     timeout: int = None,
+                     logger: Logger = None) -> str:
     """
     Obtain and return an access token for further interaction with a protected resource.
 
@@ -94,7 +102,7 @@ def access_get_token(errors: list[str], service_url: str,
     err_msg: str | None = None
 
     # obtain the token data for the given URL
-    url_token_data: dict = __get_url_token_data(service_url)
+    url_token_data: dict[str, Any] = __access_tokens.get(service_url)
 
     # has the token data been obtained ?
     if url_token_data:
@@ -143,7 +151,7 @@ def access_get_token(errors: list[str], service_url: str,
                     reply = response.reason
 
                 # was the access token retrieved ?
-                if token is not None and len(token) > 0:
+                if token:
                     # yes, proceed
                     url_token_data["token"] = token
                     duration: int = reply.get("expires_in")
@@ -162,22 +170,7 @@ def access_get_token(errors: list[str], service_url: str,
     if err_msg:
         if logger:
             logger.error(err_msg)
-        errors.append(err_msg)
-
-    return result
-
-
-def __get_url_token_data(service_url: str) -> dict:
-
-    # obtain the data for the given service URL
-    result: dict = __access_tokens.get(service_url)
-
-    # no data found for URL, but environment data matches it ?
-    if not result and service_url == SECURITY_URL_GET_TOKEN:
-        # yes, store the data
-        access_set_parameters(service_url,
-                              SECURITY_USER_ID, SECURITY_USER_PWD,
-                              SECURITY_KEY_USER_ID, SECURITY_KEY_USER_PWD)
-        result: dict = __access_tokens.get(service_url)
+        if isinstance(errors, list):
+            errors.append(err_msg)
 
     return result
