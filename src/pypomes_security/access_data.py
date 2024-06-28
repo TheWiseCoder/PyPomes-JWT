@@ -105,7 +105,7 @@ class AccessData:
             if token_data:
                 result = (token_data.get("token"), token_data.get("expiration"),
                           token_data.get("user-id"), token_data.get("user-pwd"),
-                          token_data.get("key-user-id"), token_data.get("keyuser-pwd"))
+                          token_data.get("key-user-id"), token_data.get("key-user-pwd"))
             elif logger:
                 logger.error(f"No access data defined for '{service_url}")
 
