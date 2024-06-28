@@ -29,7 +29,8 @@ def access_set_parameters(service_url: str,
                           user_id: str,
                           user_pwd: str,
                           key_user_id: str,
-                          key_user_pwd: str) -> None:
+                          key_user_pwd: str,
+                          logger: Logger = None) -> None:
     """
     Set the parameters to use in the service invocation to obtain the access token for *service_url*.
 
@@ -38,6 +39,7 @@ def access_set_parameters(service_url: str,
     :param user_pwd: password of user in request
     :param key_user_id: key for sending user id in request
     :param key_user_pwd: key for sending user password in request
+    :param logger: optional logger
     """
     # build the access token structure
     url_token_data: dict[str, Any] = {
@@ -51,6 +53,9 @@ def access_set_parameters(service_url: str,
         "user_id": user_id,
         "user_pwd": user_pwd
     }
+    if logger:
+        logger.debug("Access token data set for "
+                     f"'{service_url}': {url_token_data}")
 
     # save it to the global repository
     __access_tokens[service_url] = url_token_data
@@ -62,7 +67,7 @@ def access_clear_parameters(service_url: str,
     Remove from storage and return the parameters associated with *service_url*.
 
     :param service_url: the reference URL
-    :param logger: optional logger to log the operation with
+    :param logger: optional logger
     :return: the removed parameters, or 'None' if they were not found
     """
     # initialize the return variable
@@ -92,7 +97,7 @@ def access_get_token(errors: list[str],
     :param errors: incidental error messages
     :param service_url: request URL for the access token
     :param timeout: timeout, in seconds (defaults to HTTP_POST_TIMEOUT - use None to omit)
-    :param logger: optional logger to log the operation with
+    :param logger: optional logger
     :return: the access token
     """
     # inicialize the return variable
@@ -125,7 +130,7 @@ def access_get_token(errors: list[str],
 
             # send the REST request
             if logger:
-                logger.info(f"Sending REST request to {service_url}")
+                logger.debug(f"Sending REST request to {service_url}")
             try:
                 # return data:
                 # {
@@ -137,7 +142,7 @@ def access_get_token(errors: list[str],
                     json=payload,
                     timeout=timeout
                 )
-                reply: dict | str
+                reply: dict[str, Any] | str
                 token: str | None = None
                 # was the request successful ?
                 if response.status_code in [200, 201, 202]:
@@ -145,7 +150,7 @@ def access_get_token(errors: list[str],
                     reply = response.json()
                     token = reply.get("access_token")
                     if logger:
-                        logger.info(f"Access token obtained: {reply}")
+                        logger.debug(f"Access token obtained: {reply}")
                 else:
                     # no, retrieve the reason for the failure
                     reply = response.reason
