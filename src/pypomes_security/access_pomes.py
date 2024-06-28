@@ -6,24 +6,10 @@ from pypomes_core import TIMEZONE_LOCAL, exc_format
 from requests import Response
 from typing import Any
 
+from .access_data import AccessData
 
-# initial data for <access_url> in '__access_tokens':
-# {
-#   <access_url> = {
-#     "token": None,
-#     "expiration": datetime(year=2000,
-#                            month=1,
-#                            day=1,
-#                            tzinfo=TIMEZONE_LOCAL),
-#     "key_user_id": <key-user-id>,
-#     "key_user_pwd": <key-user-pwd>,
-#     "user_id": <user-id>,
-#     "user_pwd": <user-pwd>
-#   },
-#   ...
-# }
-__access_tokens: dict[str, dict[str, Any]] = {}
 
+__access_data: AccessData = AccessData()
 
 def access_set_parameters(service_url: str,
                           user_id: str,
@@ -32,33 +18,21 @@ def access_set_parameters(service_url: str,
                           key_user_pwd: str,
                           logger: Logger = None) -> None:
     """
-    Set the parameters to use in the service invocation to obtain the access token for *service_url*.
+    Set the parameters needed to obtain access tokens from *service_url*.
 
-    :param service_url: the reference URL for obtaining the access token
+    :param service_url: the reference URL for obtaining access tokens
     :param user_id: id of user in request
     :param user_pwd: password of user in request
     :param key_user_id: key for sending user id in request
     :param key_user_pwd: key for sending user password in request
     :param logger: optional logger
     """
-    # build the access token structure
-    url_token_data: dict[str, Any] = {
-        "token": None,
-        "expiration": datetime(year=2000,
-                               month=1,
-                               day=1,
-                               tzinfo=TIMEZONE_LOCAL),
-        "key_user_id": key_user_id,
-        "key_user_pwd": key_user_pwd,
-        "user_id": user_id,
-        "user_pwd": user_pwd
-    }
-    if logger:
-        logger.debug("Access token data set for "
-                     f"'{service_url}': {url_token_data}")
-
-    # save it to the global repository
-    __access_tokens[service_url] = url_token_data
+    __access_data.add_service_access(service_url=service_url,
+                                     user_id=user_id,
+                                     user_pwd=user_pwd,
+                                     key_user_id=key_user_id,
+                                     key_user_pwd=key_user_pwd,
+                                     logger=logger)
 
 
 def access_clear_parameters(service_url: str,
@@ -70,18 +44,8 @@ def access_clear_parameters(service_url: str,
     :param logger: optional logger
     :return: the removed parameters, or 'None' if they were not found
     """
-    # initialize the return variable
-    result: dict[str, Any] | None = None
-
-    if logger:
-        logger.debug(f"Access token data clear requested for '{service_url}'")
-
-    if hasattr(__access_tokens, service_url):
-        result = __access_tokens.pop(service_url)
-        if logger:
-            logger.debug(f"Access token data cleared for '{service_url}'")
-
-    return result
+    return __access_data.clear_service_access(service_url=service_url,
+                                              logger=logger)
 
 
 def access_get_token(errors: list[str],
@@ -107,25 +71,21 @@ def access_get_token(errors: list[str],
     err_msg: str | None = None
 
     # obtain the token data for the given URL
-    url_token_data: dict[str, Any] = __access_tokens.get(service_url)
+    token, expiration, user_id, user_pwd, key_user_id, key_user_pwd = \
+        __access_data.get_access_data(service_url=service_url,
+                                      logger=logger)
 
     # has the token data been obtained ?
-    if url_token_data:
+    if token:
         # yes, proceed
-        token_expiration: datetime = url_token_data.get("expiration")
-
-        # establish the current date and time
         just_now: datetime = datetime.now(TIMEZONE_LOCAL)
 
         # is the current token still valid ?
-        if just_now < token_expiration:
-            # yes, return it
-            result = url_token_data.get("token")
-        else:
+        if just_now >= expiration:
             # no, retrieve a new one
-            payload: dict = {
-                url_token_data.get("key_user_id"): url_token_data.get("user_id"),
-                url_token_data.get("key_user_pwd"): url_token_data.get("user_pwd")
+            payload: dict[str, str] = {
+                key_user_id: user_id,
+                key_user_pwd: user_pwd
             }
 
             # send the REST request
@@ -143,7 +103,7 @@ def access_get_token(errors: list[str],
                     timeout=timeout
                 )
                 reply: dict[str, Any] | str
-                token: str | None = None
+                token = None
                 # was the request successful ?
                 if response.status_code in [200, 201, 202]:
                     # yes, retrieve the access token returned
@@ -158,9 +118,12 @@ def access_get_token(errors: list[str],
                 # was the access token retrieved ?
                 if token:
                     # yes, proceed
-                    url_token_data["token"] = token
                     duration: int = reply.get("expires_in")
-                    url_token_data["expiration"] = just_now + timedelta(seconds=duration)
+                    expiration: datetime = just_now + timedelta(seconds=duration)
+                    __access_data.set_access_data(service_url=service_url,
+                                                  token=token,
+                                                  expiration=expiration,
+                                                  logger=logger)
                     result = token
                 else:
                     # no, report the problem
