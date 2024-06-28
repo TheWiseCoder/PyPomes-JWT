@@ -75,8 +75,8 @@ def access_get_token(errors: list[str],
         __access_data.get_access_data(service_url=service_url,
                                       logger=logger)
 
-    # has the token data been obtained ?
-    if token:
+    # has the token or its expiration data been obtained ?
+    if token or expiration:
         # yes, proceed
         just_now: datetime = datetime.now(TIMEZONE_LOCAL)
 
