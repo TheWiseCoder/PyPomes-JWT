@@ -42,7 +42,7 @@ def access_clear_parameters(service_url: str,
 
     :param service_url: the reference URL
     :param logger: optional logger
-    :return: the removed parameters, or 'None' if they were not found
+    :return: the cleared parameters, or 'None' if they were not found
     """
     return __access_data.clear_service_access(service_url=service_url,
                                               logger=logger)
@@ -62,7 +62,7 @@ def access_get_token(errors: list[str],
     :param service_url: request URL for the access token
     :param timeout: timeout, in seconds (defaults to HTTP_POST_TIMEOUT - use None to omit)
     :param logger: optional logger
-    :return: the access token
+    :return: the access token, or 'None' if an error ocurred
     """
     # inicialize the return variable
     result: str | None = None

@@ -24,10 +24,10 @@ class AccessData:
     """
     def __init__(self) -> None:
         """
-        Initizalize the token access structure.
+        Initizalize the token access *dict*.
         """
         self.access_lock: Lock = Lock()
-        self.access_data: dict[str, Any] = {}
+        self.access_data: dict[str, dict[str, Any]] = {}
 
     def add_service_access(self,
                            service_url: str,
@@ -84,7 +84,6 @@ class AccessData:
                 logger.warning(f"No access data defined for '{service_url}")
 
         return result
-
 
     def get_access_data(self,
                         service_url: str,
