@@ -13,7 +13,7 @@ class AccessData:
          {
            <access_url> = {
              "token": <access-token>,
-             "expiration": <datetime>,
+             "expiration": <timestamp>,
              "key_user_id": <key-user-id>,
              "key_user_pwd": <key-user-pwd>,
              "user_id": <user-id>,

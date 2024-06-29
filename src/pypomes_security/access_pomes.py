@@ -75,7 +75,7 @@ def access_get_token(errors: list[str],
         __access_data.get_access_data(service_url=service_url,
                                       logger=logger)
 
-    # has the token or its expiration data been obtained ?
+    # has the token's expiration timestamp been obtained ?
     if expiration:
         # yes, proceed
         just_now: datetime = datetime.now()
@@ -85,7 +85,7 @@ def access_get_token(errors: list[str],
             # yes, return it
             result = token
         else:
-            # no, retrieve a new one
+            # no, obtain a new one
             payload: dict[str, str] = {
                 key_user_id: user_id,
                 key_user_pwd: user_pwd
