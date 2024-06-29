@@ -47,7 +47,7 @@ class AccessData:
         :param logger: optional logger
         """
         with self.access_lock:
-            if not self.access_data.get(service_url):
+            if service_url not in self.access_data:
                 token_data: dict[str, Any] = {
                     "token": None,
                     "expiration": datetime(year=2000,
@@ -79,7 +79,7 @@ class AccessData:
         # initialize the return variable
         result: dict[str, Any] | None = None
         with self.access_lock:
-            if self.access_data.get(service_url):
+            if service_url in self.access_data:
                 result = self.access_data.pop(service_url)
                 if logger:
                     logger.debug(f"Cleared access data for '{service_url}'")
