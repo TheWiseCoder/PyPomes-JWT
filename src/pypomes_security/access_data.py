@@ -47,7 +47,7 @@ class AccessData:
         :param logger: optional logger
         """
         with self.access_lock:
-            if not hasattr(self.access_data, service_url):
+            if not self.access_data.get(service_url):
                 token_data: dict[str, Any] = {
                     "token": None,
                     "expiration": datetime(year=2000,
@@ -60,6 +60,8 @@ class AccessData:
                 }
                 self.access_data[service_url] = token_data
                 if logger:
+                    token_data.pop("user-id")
+                    token_data.pop("user-pwd")
                     logger.debug("Access token data set for "
                                  f"'{service_url}': {token_data}")
             elif logger:
@@ -77,7 +79,7 @@ class AccessData:
         # initialize the return variable
         result: dict[str, Any] | None = None
         with self.access_lock:
-            if hasattr(self.access_data, service_url):
+            if self.access_data.get(service_url):
                 result = self.access_data.pop(service_url)
                 if logger:
                     logger.debug(f"Cleared access data for '{service_url}'")

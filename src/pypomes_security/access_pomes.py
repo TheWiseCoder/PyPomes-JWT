@@ -2,7 +2,7 @@ import requests
 import sys
 from datetime import datetime, timedelta
 from logging import Logger
-from pypomes_core import TIMEZONE_LOCAL, exc_format
+from pypomes_core import exc_format
 from requests import Response
 from typing import Any
 
@@ -76,12 +76,15 @@ def access_get_token(errors: list[str],
                                       logger=logger)
 
     # has the token or its expiration data been obtained ?
-    if token or expiration:
+    if expiration:
         # yes, proceed
-        just_now: datetime = datetime.now(TIMEZONE_LOCAL)
+        just_now: datetime = datetime.now()
 
         # is the current token still valid ?
-        if just_now >= expiration:
+        if just_now < expiration:
+            # yes, return it
+            result = token
+        else:
             # no, retrieve a new one
             payload: dict[str, str] = {
                 key_user_id: user_id,
