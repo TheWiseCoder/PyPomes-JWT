@@ -60,10 +60,7 @@ class AccessData:
                 }
                 self.access_data[service_url] = token_data
                 if logger:
-                    token_data.pop("user-id")
-                    token_data.pop("user-pwd")
-                    logger.debug("Access token data set for "
-                                 f"'{service_url}': {token_data}")
+                    logger.debug(f"Access token data set for '{service_url}'")
             elif logger:
                 logger.warning(f"Access token data already exists for '{service_url}'")
 
