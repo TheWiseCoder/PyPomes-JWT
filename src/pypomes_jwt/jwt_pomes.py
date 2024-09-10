@@ -126,24 +126,36 @@ def jwt_get_claims(errors: list[str],
     return result
 
 
-def jwt_validate_token(token: str,
+def jwt_verify_request(request: request,
                        logger: Logger = None) -> Response:
     """
-    Validate the JWT *token*.
+    Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
 
-    :param token: the token to be validated
+    :param request: the request to be verifies
     :param logger: optional logger
-    :return: 'None' if the validation succeeds, otherwise a 'Response' object reporting the error
+    :return: 'None' if the request is valid, otherwise a 'Response' object reporting the error
     """
     # initialize the return variable
     result: Response | None = None
 
-    try:
-        _get_claims(token=token)
-    except Exception as e:
-        if logger:
-            logger.error(msg=repr(e))
-        result = Response(response=repr(e),
+    # retrieve the authorization from the request header
+    auth_header: str = request.headers.get("Authorization")
+
+    # was a 'Bearer' authorization obtained ?
+    if auth_header and auth_header.startswith("Bearer "):
+        # yes, extract and validate the JWT token
+        token: str = auth_header.split(" ")[1]
+        try:
+            _get_claims(token=token)
+        except Exception as e:
+            # validation failed
+            if logger:
+                logger.error(msg=repr(e))
+            result = Response(response=repr(e),
+                              status=400)
+    else:
+        # no, report the error
+        result = Response(response="Authorization failed, as no JWT token was provided",
                           status=400)
 
     return result
@@ -155,7 +167,7 @@ def jwt_service() -> Response:
     """
     Entry point for obtaining JWT tokens.
 
-    Structure of returned data:
+    Structure of return data:
     {
       "access_token": <jwt-token>,
       "expires_in": <seconds>
@@ -166,7 +178,7 @@ def jwt_service() -> Response:
     # declare the return variable
     result: Response
 
-    # obtain the JWT token
+    # obtain the token data
     try:
         token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=request.url)
         result = jsonify(token_data)
