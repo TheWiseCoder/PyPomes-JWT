@@ -273,11 +273,11 @@ class JwtData:
         return result
 
 
-def _validate_token(token: str) -> dict[str, Any]:
+def _get_claims(token: str) -> dict[str, Any]:
     """
-    Validate the JWT *token*, and return its claimset.
+    Obtain and return the claims of a JWT *token*.
 
-    :param token: the token to be validated
+    :param token: the token to be inspected for claims
     :return: the token's claimset, or 'None' if error
     :raises ExpiredSignatureError: token has expired
     """

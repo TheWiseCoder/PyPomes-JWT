@@ -5,7 +5,7 @@ from pypomes_crypto import crypto_generate_rsa_keys
 from secrets import token_bytes
 from typing import Any, Final, Literal
 
-from .jwt_data import JwtData, _validate_token
+from .jwt_data import JwtData, _get_claims
 
 JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}JWT_ACCESS_MAX_AGE",
                                              def_value=3600)
@@ -102,14 +102,14 @@ def jwt_get_token(errors: list[str],
     return result
 
 
-def jwt_validate_token(errors: list[str],
-                       token: str,
-                       logger: Logger = None) -> dict[str, Any]:
+def jwt_get_claims(errors: list[str],
+                   token: str,
+                   logger: Logger = None) -> dict[str, Any]:
     """
-    Validate the JWT *token*, and return its claimset.
+    Obtain and return the claimset of a JWT *token*.
 
     :param errors: incidental error messages
-    :param token: the token to be validated
+    :param token: the token to be inspected for claims
     :param logger: optional logger
     :return: the token's claimset, or 'None' if error
     """
@@ -117,11 +117,34 @@ def jwt_validate_token(errors: list[str],
     result: dict[str, Any] | None = None
 
     try:
-        result = _validate_token(token=token)
+        result = _get_claims(token=token)
     except Exception as e:
         if logger:
             logger.error(msg=repr(e))
         errors.append(repr(e))
+
+    return result
+
+
+def jwt_validate_token(token: str,
+                       logger: Logger = None) -> Response:
+    """
+    Validate the JWT *token*.
+
+    :param token: the token to be validated
+    :param logger: optional logger
+    :return: 'None' if the validation succeeds, otherwise a 'Response' object reporting the error
+    """
+    # initialize the return variable
+    result: Response | None = None
+
+    try:
+        _get_claims(token=token)
+    except Exception as e:
+        if logger:
+            logger.error(msg=repr(e))
+        result = Response(response=repr(e),
+                          status=400)
 
     return result
 

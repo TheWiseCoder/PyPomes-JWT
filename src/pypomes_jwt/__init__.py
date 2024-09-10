@@ -1,12 +1,12 @@
 from .jwt_pomes import (
-    jwt_service, jwt_get_token, jwt_validate_token,
-    jwt_set_service_access, jwt_remove_service_access
+    jwt_get_token, jwt_get_claims, jwt_validate_token,
+    jwt_service, jwt_set_service_access, jwt_remove_service_access
 )
 
 __all__ = [
     # access_pomes
-    "jwt_service", "jwt_get_token", "jwt_validate_token",
-    "jwt_set_service_access", "jwt_remove_service_access"
+    "jwt_get_token", "jwt_get_claims", "jwt_validate_token",
+    "jwt_service", "jwt_set_service_access", "jwt_remove_service_access"
 ]
 
 from importlib.metadata import version
