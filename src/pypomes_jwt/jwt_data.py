@@ -254,7 +254,7 @@ class JwtData:
                         if logger:
                             logger.debug(f"Access token obtained: {result}")
                         with self.access_lock:
-                            control_data["access-token"] = result
+                            control_data["access-token"] = result.get("access_token")
                             duration: int = result.get("expires_in")
                             registered_claims["exp"] = just_now + timedelta(seconds=duration)
                     else:
