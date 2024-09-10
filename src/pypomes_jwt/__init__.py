@@ -1,11 +1,11 @@
 from .jwt_pomes import (
-    jwt_initialize, jwt_get_token, jwt_validate_token,
+    jwt_service, jwt_get_token, jwt_validate_token,
     jwt_set_service_access, jwt_remove_service_access
 )
 
 __all__ = [
     # access_pomes
-    "jwt_initialize", "jwt_get_token", "jwt_validate_token",
+    "jwt_service", "jwt_get_token", "jwt_validate_token",
     "jwt_set_service_access", "jwt_remove_service_access"
 ]
 

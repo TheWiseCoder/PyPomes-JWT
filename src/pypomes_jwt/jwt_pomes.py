@@ -1,10 +1,11 @@
+from flask import Response, request, jsonify
 from logging import Logger
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
 from pypomes_crypto import crypto_generate_rsa_keys
 from secrets import token_bytes
 from typing import Any, Final, Literal
 
-from .jwt_data import JwtData, _set_base_url, _validate_token
+from .jwt_data import JwtData, _validate_token
 
 JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}JWT_ACCESS_MAX_AGE",
                                              def_value=3600)
@@ -21,26 +22,11 @@ JWT_RSA_PRIVATE_KEY: Final[str] = __priv_key
 JWT_RSA_PUBLIC_KEY: Final[str] = __pub_key
 
 # the JWT data object
-__jwt_data: JwtData | None = None
-
-
-def jwt_initialize(base_url: str) -> None:
-    """
-    Initialize the JWT service, and identify its invoking base URL.
-
-    Only the first invocation of the function will be considered.
-
-    :param base_url: the base URL for invoking this service
-    """
-    global __jwt_data
-    if not __jwt_data:
-        __jwt_data = JwtData()
-        _set_base_url(base_url=base_url)
+__jwt_data: JwtData = JwtData()
 
 
 def jwt_set_service_access(claims: dict[str, Any],
                            service_url: str,
-                           service_tag: str = None,
                            auth_type: Literal["HS256", "HS512", "RSA256", "RSA512"] = "HS256",
                            access_max_age: int = JWT_ACCESS_MAX_AGE,
                            refresh_max_age: int = JWT_REFRESH_MAX_AGE,
@@ -48,13 +34,13 @@ def jwt_set_service_access(claims: dict[str, Any],
                            private_key: str = JWT_RSA_PRIVATE_KEY,
                            public_key: str = JWT_RSA_PUBLIC_KEY,
                            request_timeout: int = None,
+                           local_provider: bool = False,
                            logger: Logger = None) -> None:
     """
     Set the data needed to obtain JWT tokens from *service_url*.
 
     :param claims: the JWT claimset, as key-value pairs
     :param service_url: the reference URL
-    :param service_tag: element in the path, uniquely identifying the service
     :param auth_type: the authentication type
     :param access_max_age: token duration, in seconds
     :param refresh_max_age: duration for the refresh operation, in seconds
@@ -62,11 +48,11 @@ def jwt_set_service_access(claims: dict[str, Any],
     :param private_key: private key for RSA authentication
     :param public_key: public key for RSA authentication
     :param request_timeout: timeout for the requests to the service URL
+    :param local_provider: whether 'service_url' is a local endpoint
     :param logger: optional logger
     """
     __jwt_data.add_access_data(claims=claims,
                                service_url=service_url,
-                               service_tag=service_tag,
                                auth_type=auth_type,
                                access_max_age=access_max_age,
                                refresh_max_age=refresh_max_age,
@@ -74,6 +60,7 @@ def jwt_set_service_access(claims: dict[str, Any],
                                private_key=private_key,
                                public_key=public_key,
                                request_timeout=request_timeout,
+                               local_provider=local_provider,
                                logger=logger)
 
 
@@ -134,5 +121,38 @@ def jwt_validate_token(errors: list[str],
         if logger:
             logger.error(msg=repr(e))
         errors.append(repr(e))
+
+    return result
+
+
+# @flask_app.route(rule="/jwt",
+#                  methods=["GET"])
+def jwt_service() -> Response:
+    """
+    Entry point for obtaining JWT tokens.
+
+    Structure of returned data:
+    {
+      "access_token": <jwt-token>,
+      "expires_in": <seconds>
+    }
+
+    :return: the requested JWT token
+    """
+    # declare the return variable
+    result: Response
+
+    # obtain the JWT token
+    token: str
+    try:
+        token = __jwt_data.get_token(service_url=request.url)
+        access_data: dict[str, dict[str, Any]] = __jwt_data.retrieve_access_data(service_url=request.url)
+        result = jsonify({
+            "access_token": token,
+            "expires_in": access_data.get("registered-claims").get("exp")
+        })
+    except Exception as e:
+        result = Response(response=repr(e),
+                          status=400)
 
     return result
