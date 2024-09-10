@@ -159,11 +159,11 @@ class JwtData:
 
         return result
 
-    def get_token(self,
-                  service_url: str,
-                  logger: Logger = None) -> dict[str, Any]:
+    def get_token_data(self,
+                       service_url: str,
+                       logger: Logger = None) -> dict[str, Any]:
         """
-        Obtain and return the JWT token associated with *service_url*, and its expiration timestamp.
+        Obtain and return the JWT token associated with *service_url*, along with its expiration timestamp.
 
         Structure of the return data:
         {

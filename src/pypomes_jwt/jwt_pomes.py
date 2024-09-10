@@ -91,9 +91,9 @@ def jwt_get_token(errors: list[str],
     result: str | None = None
 
     try:
-        reply: dict[str, Any] = __jwt_data.get_token(service_url=service_url,
-                                                     logger=logger)
-        result = reply.get("access_token")
+        token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=service_url,
+                                                               logger=logger)
+        result = token_data.get("access_token")
     except Exception as e:
         if logger:
             logger.error(msg=repr(e))
@@ -144,14 +144,9 @@ def jwt_service() -> Response:
     result: Response
 
     # obtain the JWT token
-    token: str
     try:
-        token = __jwt_data.get_token(service_url=request.url)
-        access_data: dict[str, dict[str, Any]] = __jwt_data.retrieve_access_data(service_url=request.url)
-        result = jsonify({
-            "access_token": token,
-            "expires_in": access_data.get("registered-claims").get("exp")
-        })
+        token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=request.url)
+        result = jsonify(token_data)
     except Exception as e:
         result = Response(response=repr(e),
                           status=400)
