@@ -91,8 +91,9 @@ def jwt_get_token(errors: list[str],
     result: str | None = None
 
     try:
-        result = __jwt_data.get_token(service_url=service_url,
-                                      logger=logger)
+        reply: dict[str, Any] = __jwt_data.get_token(service_url=service_url,
+                                                     logger=logger)
+        result = reply.get("access_token")
     except Exception as e:
         if logger:
             logger.error(msg=repr(e))
