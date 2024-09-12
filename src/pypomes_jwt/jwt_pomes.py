@@ -152,11 +152,11 @@ def jwt_verify_request(request: request,
             if logger:
                 logger.error(msg=repr(e))
             result = Response(response=repr(e),
-                              status=400)
+                              status=401)
     else:
         # no, report the error
         result = Response(response="Authorization failed, as no JWT token was provided",
-                          status=400)
+                          status=401)
 
     return result
 
