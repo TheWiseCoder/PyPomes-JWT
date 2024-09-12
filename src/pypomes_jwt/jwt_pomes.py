@@ -102,6 +102,37 @@ def jwt_get_token(errors: list[str],
     return result
 
 
+def jwt_get_token_data(errors: list[str],
+                       service_url: str,
+                       logger: Logger = None) -> dict[str, Any]:
+    """
+    Obtain and return the JWT token associated with *service_url*, along with its expiration timestamp.
+
+    Structure of the return data:
+    {
+      "access_token": <jwt-token>,
+      "expires_in": <seconds-to-expiratio>
+    }
+
+    :param errors: incidental error messages
+    :param service_url: the reference URL for obtaining JWT tokens
+    :param logger: optional logger
+    :return: the JWT token data, or 'None' if error
+    """
+    # inicialize the return variable
+    result: dict[str, Any] | None = None
+
+    try:
+        result = __jwt_data.get_token_data(service_url=service_url,
+                                           logger=logger)
+    except Exception as e:
+        if logger:
+            logger.error(msg=repr(e))
+        errors.append(repr(e))
+
+    return result
+
+
 def jwt_get_claims(errors: list[str],
                    token: str,
                    logger: Logger = None) -> dict[str, Any]:
