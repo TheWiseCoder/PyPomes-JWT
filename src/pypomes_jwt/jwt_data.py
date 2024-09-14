@@ -1,7 +1,7 @@
 import jwt
 import requests
 from datetime import datetime, timedelta
-from jwt.exceptions import ExpiredSignatureError
+from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from logging import Logger
 from requests import Response
 from threading import Lock
@@ -79,7 +79,7 @@ class JwtData:
         :param local_provider: whether 'service_url' is a local endpoint
         :param logger: optional logger
         """
-        # obtain the item in storage
+        # obtain the item in s"torage
         item_data: dict[str, dict[str, Any]] = self.retrieve_access_data(service_url=service_url)
         if not item_data:
             # build control data
@@ -89,7 +89,7 @@ class JwtData:
                 "access-max-age": access_max_age,
                 "request-timeout": request_timeout,
                 "local-provider": local_provider,
-                "refresh-exp": datetime.now() + timedelta(seconds=refresh_max_age)
+                "refresh-exp": datetime.utcnow() + timedelta(seconds=refresh_max_age)
             }
             if auth_type in ["HS256", "HS512"]:
                 control_data["secret-key"] = secret_key
@@ -100,7 +100,7 @@ class JwtData:
             # build claims
             custom_claims: dict[str, Any] = {}
             registered_claims: dict[str, Any] = {}
-            for key, value in claims:
+            for key, value in claims.items():
                 if key in ["nbt", "iss", "aud", "iat"]:
                     registered_claims[key] = value
                 else:
@@ -168,12 +168,13 @@ class JwtData:
         Structure of the return data:
         {
           "access_token": <jwt-token>,
-          "expires_in": <seconds-to-expiratio>
+          "expires_in": <seconds-to-expiration>
         }
 
         :param service_url: the reference URL for obtaining JWT tokens
         :param logger: optional logger
         :return: the JWT token data, or 'None' if error
+        :raises InvalidTokenError: token is invalid
         :raises InvalidKeyError: authentication key is not in the proper format
         :raises ExpiredSignatureError: token and refresh period have expired
         :raises InvalidSignatureError: signature does not match the one provided as part of the token
@@ -197,12 +198,16 @@ class JwtData:
             control_data: dict[str, Any] = item_data.get("control-data")
             custom_claims: dict[str, Any] = item_data.get("custom-claims")
             registered_claims: dict[str, Any] = item_data.get("registered-claims")
-            just_now: datetime = datetime.now()
+            just_now: datetime = datetime.utcnow()
 
             # is the current token still valid ?
             if just_now < registered_claims.get("exp"):
                 # yes, return it
-                result = control_data.get("access-token")
+                diff: timedelta = registered_claims.get("exp") - just_now
+                result = {
+                    "access_token": control_data.get("access-token"),
+                    "expires_in": diff.total_seconds()
+                }
             # is the refresh operation still standing ?
             elif just_now > control_data.get("refresh-exp"):
                 # no, raise the error
@@ -211,7 +216,7 @@ class JwtData:
                     logger.error(err_msg)
                 raise ExpiredSignatureError(err_msg)
             else:
-                # obtain a new token
+                # yes, obtain a new token
                 service_url: str = control_data.get("service-url")
                 claims: dict[str, Any] = registered_claims.copy()
                 claims.update(custom_claims)
@@ -237,6 +242,7 @@ class JwtData:
                         service_url = service_url[:service_url.index("?")]
                     if logger:
                         logger.debug(f"Sending REST request to {service_url}")
+                    claims.pop("exp", None)
                     # return data:
                     # {
                     #   "access_token": <token>,
@@ -260,6 +266,8 @@ class JwtData:
                     else:
                         # no, raise an exception
                         err_msg: str = f"Invocation of '{service_url}' failed: {response.reason}"
+                        if response.text:
+                            err_msg += f" - {response.text}"
                         if logger:
                             logger.error(err_msg)
                         raise RuntimeError(err_msg)
@@ -272,13 +280,29 @@ class JwtData:
 
         return result
 
+    def get_claims(self,
+                   token: str) -> dict[str, Any]:
+        """
+        Obtain and return the claims of a JWT *token*.
 
-def _get_claims(token: str) -> dict[str, Any]:
-    """
-    Obtain and return the claims of a JWT *token*.
+        :param token: the token to be inspected for claims
+        :return: the token's claimset, or 'None' if error
+        :raises InvalidTokenError: token is not valid
+        :raises ExpiredSignatureError: token has expired
+        """
+        algorithm: str | None = None
+        key: str | None = None
+        with self.access_lock:
+            for item_data in self.access_data:
+                control_data: dict[str, Any] = item_data.get("control-data")
+                if token == control_data.get("access-token"):
+                    algorithm = control_data.get("auth-type")
+                    key = control_data.get("public-key") or control_data.get("secret-key")
+                    break
 
-    :param token: the token to be inspected for claims
-    :return: the token's claimset, or 'None' if error
-    :raises ExpiredSignatureError: token has expired
-    """
-    return jwt.decode(jwt=token)
+        if not algorithm or not key:
+            raise InvalidTokenError("Token is not valid")
+
+        return jwt.decode(jwt=token,
+                          key=key,
+                          algorithms=[algorithm])

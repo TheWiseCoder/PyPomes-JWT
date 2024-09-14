@@ -1,3 +1,4 @@
+import contextlib
 from flask import Response, request, jsonify
 from logging import Logger
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
@@ -5,7 +6,7 @@ from pypomes_crypto import crypto_generate_rsa_keys
 from secrets import token_bytes
 from typing import Any, Final, Literal
 
-from .jwt_data import JwtData, _get_claims
+from .jwt_data import JwtData
 
 JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}JWT_ACCESS_MAX_AGE",
                                              def_value=3600)
@@ -13,6 +14,8 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
                                               def_value=43200)
 JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}JWT_HS_SECRET_KEY",
                                                 def_value=token_bytes(32))
+# must point to 'jwt_service()' below
+JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}JWT_ENDPOINT_URL")
 
 __priv_key: str = env_get_str(key=f"{APP_PREFIX}JWT_RSA_PRIVATE_KEY")
 __pub_key: str = env_get_str(key=f"{APP_PREFIX}JWT_RSA_PUBLIC_KEY")
@@ -51,6 +54,16 @@ def jwt_set_service_access(claims: dict[str, Any],
     :param local_provider: whether 'service_url' is a local endpoint
     :param logger: optional logger
     """
+    # extract the extra claims
+    pos: int = service_url.find("?")
+    if pos > 0:
+        if not local_provider:
+            params: list[str] = service_url[pos+1:].split(sep="&")
+            for param in params:
+                claims[param.split("=")[0]] = param.split("=")[1]
+        service_url = service_url[:pos]
+
+    # register the JWT service
     __jwt_data.add_access_data(claims=claims,
                                service_url=service_url,
                                auth_type=auth_type,
@@ -67,7 +80,7 @@ def jwt_set_service_access(claims: dict[str, Any],
 def jwt_remove_service_access(service_url: str,
                               logger: Logger = None) -> None:
     """
-    Remove from storage the access data for *service_url*.
+    Remove from storage the JWT access data for *service_url*.
 
     :param service_url: the reference URL
     :param logger: optional logger
@@ -96,8 +109,8 @@ def jwt_get_token(errors: list[str],
         result = token_data.get("access_token")
     except Exception as e:
         if logger:
-            logger.error(msg=repr(e))
-        errors.append(repr(e))
+            logger.error(msg=str(e))
+        errors.append(str(e))
 
     return result
 
@@ -111,7 +124,7 @@ def jwt_get_token_data(errors: list[str],
     Structure of the return data:
     {
       "access_token": <jwt-token>,
-      "expires_in": <seconds-to-expiratio>
+      "expires_in": <seconds-to-expiration>
     }
 
     :param errors: incidental error messages
@@ -127,8 +140,8 @@ def jwt_get_token_data(errors: list[str],
                                            logger=logger)
     except Exception as e:
         if logger:
-            logger.error(msg=repr(e))
-        errors.append(repr(e))
+            logger.error(msg=str(e))
+        errors.append(str(e))
 
     return result
 
@@ -148,11 +161,11 @@ def jwt_get_claims(errors: list[str],
     result: dict[str, Any] | None = None
 
     try:
-        result = _get_claims(token=token)
+        result = __jwt_data.get_claims(token=token)
     except Exception as e:
         if logger:
-            logger.error(msg=repr(e))
-        errors.append(repr(e))
+            logger.error(msg=str(e))
+        errors.append(str(e))
 
     return result
 
@@ -162,7 +175,7 @@ def jwt_verify_request(request: request,
     """
     Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
 
-    :param request: the request to be verifies
+    :param request: the request to be verified
     :param logger: optional logger
     :return: 'None' if the request is valid, otherwise a 'Response' object reporting the error
     """
@@ -177,12 +190,12 @@ def jwt_verify_request(request: request,
         # yes, extract and validate the JWT token
         token: str = auth_header.split(" ")[1]
         try:
-            _get_claims(token=token)
+            __jwt_data.get_claims(token=token)
         except Exception as e:
             # validation failed
             if logger:
-                logger.error(msg=repr(e))
-            result = Response(response=repr(e),
+                logger.error(msg=str(e))
+            result = Response(response=str(e),
                               status=401)
     else:
         # no, report the error
@@ -192,16 +205,16 @@ def jwt_verify_request(request: request,
     return result
 
 
-# @flask_app.route(rule="/jwt",
+# @flask_app.route(rule="/jwt-service",
 #                  methods=["GET"])
 def jwt_service() -> Response:
     """
     Entry point for obtaining JWT tokens.
 
-    Structure of return data:
+    Structure of the return data:
     {
       "access_token": <jwt-token>,
-      "expires_in": <seconds>
+      "expires_in": <seconds-to-expiration>
     }
 
     :return: the requested JWT token
@@ -209,12 +222,22 @@ def jwt_service() -> Response:
     # declare the return variable
     result: Response
 
+    # obtain the reference URL
+    # noinspection PyUnusedLocal
+    service_url: str | None = None
+    with contextlib.suppress(Exception):
+        service_url = request.values.get("service-url") or request.get_json().get("service-url")
+
     # obtain the token data
-    try:
-        token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=request.url)
-        result = jsonify(token_data)
-    except Exception as e:
-        result = Response(response=repr(e),
+    if service_url:
+        try:
+            token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=service_url)
+            result = jsonify(token_data)
+        except Exception as e:
+            result = Response(response=str(e),
+                              status=400)
+    else:
+        result = Response(response="No reference URL provided",
                           status=400)
 
     return result
