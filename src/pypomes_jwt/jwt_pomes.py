@@ -1,24 +1,26 @@
 import contextlib
-from flask import Response, request, jsonify
+from flask import Request, Response, request, jsonify
 from logging import Logger
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
 from pypomes_crypto import crypto_generate_rsa_keys
 from secrets import token_bytes
 from typing import Any, Final, Literal
 
-from .jwt_data import JwtData
+from .jwt_data import JwtData, jwt_validate_token
 
-JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}JWT_ACCESS_MAX_AGE",
+JWT_DEFAULT_ALGORITHM: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
+                                                def_value="HS256")
+JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
                                              def_value=3600)
 JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
                                               def_value=43200)
-JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}JWT_HS_SECRET_KEY",
+JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET_KEY",
                                                 def_value=token_bytes(32))
 # must point to 'jwt_service()' below
-JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}JWT_ENDPOINT_URL")
+JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
-__priv_key: str = env_get_str(key=f"{APP_PREFIX}JWT_RSA_PRIVATE_KEY")
-__pub_key: str = env_get_str(key=f"{APP_PREFIX}JWT_RSA_PUBLIC_KEY")
+__priv_key: str = env_get_str(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
+__pub_key: str = env_get_str(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
 if not __priv_key or not __pub_key:
     (__priv_key, __pub_key) = crypto_generate_rsa_keys(key_size=2048)
 JWT_RSA_PRIVATE_KEY: Final[str] = __priv_key
@@ -28,9 +30,9 @@ JWT_RSA_PUBLIC_KEY: Final[str] = __pub_key
 __jwt_data: JwtData = JwtData()
 
 
-def jwt_set_service_access(claims: dict[str, Any],
-                           service_url: str,
-                           auth_type: Literal["HS256", "HS512", "RSA256", "RSA512"] = "HS256",
+def jwt_set_service_access(service_url: str,
+                           claims: dict[str, Any],
+                           algorithm: Literal["HS256", "HS512", "RSA256", "RSA512"] = JWT_DEFAULT_ALGORITHM,
                            access_max_age: int = JWT_ACCESS_MAX_AGE,
                            refresh_max_age: int = JWT_REFRESH_MAX_AGE,
                            secret_key: bytes = JWT_HS_SECRET_KEY,
@@ -42,9 +44,12 @@ def jwt_set_service_access(claims: dict[str, Any],
     """
     Set the data needed to obtain JWT tokens from *service_url*.
 
-    :param claims: the JWT claimset, as key-value pairs
+    Protocol indication in *service_url* (typically *http:* or *https:*), is disregarded, to guarantee
+    that processing herein will not be affected by in-transit protocol changes.
+
     :param service_url: the reference URL
-    :param auth_type: the authentication type
+    :param claims: the JWT claimset, as key-value pairs
+    :param algorithm: the authentication type
     :param access_max_age: token duration, in seconds
     :param refresh_max_age: duration for the refresh operation, in seconds
     :param secret_key: secret key for HS authentication
@@ -64,9 +69,9 @@ def jwt_set_service_access(claims: dict[str, Any],
         service_url = service_url[:pos]
 
     # register the JWT service
-    __jwt_data.add_access_data(claims=claims,
-                               service_url=service_url,
-                               auth_type=auth_type,
+    __jwt_data.add_access_data(service_url=service_url,
+                               claims=claims,
+                               algorithm=algorithm,
                                access_max_age=access_max_age,
                                refresh_max_age=refresh_max_age,
                                secret_key=secret_key,
@@ -119,7 +124,7 @@ def jwt_get_token_data(errors: list[str],
                        service_url: str,
                        logger: Logger = None) -> dict[str, Any]:
     """
-    Obtain and return the JWT token associated with *service_url*, along with its expiration timestamp.
+    Obtain and return the JWT token associated with *service_url*, along with its duration.
 
     Structure of the return data:
     {
@@ -161,7 +166,7 @@ def jwt_get_claims(errors: list[str],
     result: dict[str, Any] | None = None
 
     try:
-        result = __jwt_data.get_claims(token=token)
+        result = __jwt_data.get_token_claims(token=token)
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
@@ -170,7 +175,7 @@ def jwt_get_claims(errors: list[str],
     return result
 
 
-def jwt_verify_request(request: request,
+def jwt_verify_request(request: Request,
                        logger: Logger = None) -> Response:
     """
     Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
@@ -190,7 +195,9 @@ def jwt_verify_request(request: request,
         # yes, extract and validate the JWT token
         token: str = auth_header.split(" ")[1]
         try:
-            __jwt_data.get_claims(token=token)
+            jwt_validate_token(token=token,
+                               key=JWT_HS_SECRET_KEY or JWT_RSA_PUBLIC_KEY,
+                               algorithm=JWT_DEFAULT_ALGORITHM)
         except Exception as e:
             # validation failed
             if logger:
@@ -206,10 +213,19 @@ def jwt_verify_request(request: request,
 
 
 # @flask_app.route(rule="/jwt-service",
-#                  methods=["GET"])
-def jwt_service() -> Response:
+#                  methods=["GET", "POST"])
+def jwt_service(service_url: str = None) -> Response:
     """
     Entry point for obtaining JWT tokens.
+
+    In order to be serviced, the invoker must send, in the body of the request,
+    a JSON containing:
+    {
+      "service-url": "<url>",                               - the JWT reference URL (if not as parameter)
+      "<custom-claim-key-1>": "<custom-claim-value-1>",     - the registered custom claims
+      ...
+      "<custom-claim-key-n>": "<custom-claim-value-n>"
+    }
 
     Structure of the return data:
     {
@@ -217,27 +233,42 @@ def jwt_service() -> Response:
       "expires_in": <seconds-to-expiration>
     }
 
-    :return: the requested JWT token
+    :param service_url: the JWT reference URL, alternatively passed in the body's JSON
+    :return: the requested JWT token, along with its duration.
     """
     # declare the return variable
     result: Response
 
-    # obtain the reference URL
+    # obtain the parameters
     # noinspection PyUnusedLocal
-    service_url: str | None = None
+    params: dict[str, Any] = {}
     with contextlib.suppress(Exception):
-        service_url = request.values.get("service-url") or request.get_json().get("service-url")
+        params = request.get_json()
+
+    # validate the parameters
+    valid: bool = False
+    if not service_url:
+        service_url = params.get("service-url")
+    if service_url:
+        item_data: dict[str, dict[str, Any]] = __jwt_data.retrieve_access_data(service_url=service_url)
+        if item_data:
+            valid = True
+            custom_claims: dict[str, Any] = item_data.get("custom-claims")
+            for key, value in custom_claims.items():
+                if key not in params or params.get(key) != value:
+                    valid = False
+                    break
 
     # obtain the token data
-    if service_url:
+    if valid:
         try:
             token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=service_url)
             result = jsonify(token_data)
         except Exception as e:
             result = Response(response=str(e),
-                              status=400)
+                              status=401)
     else:
-        result = Response(response="No reference URL provided",
-                          status=400)
+        result = Response(response="Invalid parameters",
+                          status=401)
 
     return result
