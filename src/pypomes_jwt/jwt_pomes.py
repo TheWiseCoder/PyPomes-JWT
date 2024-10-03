@@ -30,6 +30,23 @@ JWT_RSA_PUBLIC_KEY: Final[str] = __pub_key
 __jwt_data: JwtData = JwtData()
 
 
+def jwt_needed(func: callable) -> callable:
+    """
+    Create a decorator to authenticate service endpoints with JWT tokens.
+
+    :param func: the function being decorated
+    """
+    # ruff: noqa: ANN003
+    def wrapper(*args, **kwargs) -> Response:
+        response: Response = jwt_verify_request(request=request) if JWT_ENDPOINT_URL else None
+        return response if response else func(*args, **kwargs)
+
+    # prevent a rogue error ("View function mapping is overwriting an existing endpoint function")
+    wrapper.__name__ = func.__name__
+
+    return wrapper
+
+
 def jwt_set_service_access(service_url: str,
                            claims: dict[str, Any],
                            algorithm: Literal["HS256", "HS512", "RSA256", "RSA512"] = JWT_DEFAULT_ALGORITHM,
@@ -206,14 +223,14 @@ def jwt_verify_request(request: Request,
                               status=401)
     else:
         # no, report the error
-        result = Response(response="Authorization failed, as no JWT token was provided",
+        result = Response(response="Authorization failed",
                           status=401)
 
     return result
 
 
 # @flask_app.route(rule="/jwt-service",
-#                  methods=["GET", "POST"])
+#                  methods=["POST"])
 def jwt_service(service_url: str = None) -> Response:
     """
     Entry point for obtaining JWT tokens.
