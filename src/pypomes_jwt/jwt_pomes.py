@@ -1,8 +1,8 @@
 import contextlib
 from flask import Request, Response, request, jsonify
 from logging import Logger
+from OpenSSL import crypto
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
-from pypomes_crypto import crypto_generate_rsa_keys
 from secrets import token_bytes
 from typing import Any, Final, Literal
 
@@ -19,12 +19,14 @@ JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET
 # must point to 'jwt_service()' below
 JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
-__priv_key: str = env_get_str(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
-__pub_key: str = env_get_str(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
+__priv_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
+__pub_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
 if not __priv_key or not __pub_key:
-    (__priv_key, __pub_key) = crypto_generate_rsa_keys(key_size=2048)
-JWT_RSA_PRIVATE_KEY: Final[str] = __priv_key
-JWT_RSA_PUBLIC_KEY: Final[str] = __pub_key
+    pk = crypto.PKey()
+    __priv_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pk)
+    __pub_key = crypto.dump_publickey(crypto.FILETYPE_PEM, pk)
+JWT_RSA_PRIVATE_KEY: Final[bytes] = __priv_key
+JWT_RSA_PUBLIC_KEY: Final[bytes] = __pub_key
 
 # the JWT data object
 __jwt_data: JwtData = JwtData()
@@ -53,8 +55,8 @@ def jwt_set_service_access(service_url: str,
                            access_max_age: int = JWT_ACCESS_MAX_AGE,
                            refresh_max_age: int = JWT_REFRESH_MAX_AGE,
                            secret_key: bytes = JWT_HS_SECRET_KEY,
-                           private_key: str = JWT_RSA_PRIVATE_KEY,
-                           public_key: str = JWT_RSA_PUBLIC_KEY,
+                           private_key: bytes = JWT_RSA_PRIVATE_KEY,
+                           public_key: bytes = JWT_RSA_PUBLIC_KEY,
                            request_timeout: int = None,
                            local_provider: bool = False,
                            logger: Logger = None) -> None:

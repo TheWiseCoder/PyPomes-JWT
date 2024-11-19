@@ -1,7 +1,7 @@
 import jwt
 import math
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jwt.exceptions import InvalidTokenError
 from logging import Logger
 from requests import Response
@@ -60,8 +60,8 @@ class JwtData:
                         access_max_age: int,
                         refresh_max_age: int,
                         secret_key: bytes,
-                        private_key: str,
-                        public_key: str,
+                        private_key: bytes,
+                        public_key: bytes,
                         request_timeout: float,
                         local_provider: bool,
                         logger: Logger = None) -> None:
@@ -98,7 +98,7 @@ class JwtData:
                 "access-max-age": access_max_age,
                 "request-timeout": request_timeout,
                 "local-provider": local_provider,
-                "refresh-exp": datetime.utcnow() + timedelta(seconds=refresh_max_age)
+                "refresh-exp": datetime.now(timezone.utc) + timedelta(seconds=refresh_max_age)
             }
             if algorithm in ["HS256", "HS512"]:
                 control_data["secret-key"] = secret_key
@@ -190,7 +190,7 @@ class JwtData:
             control_data: dict[str, Any] = item_data.get("control-data")
             custom_claims: dict[str, Any] = item_data.get("custom-claims")
             standard_claims: dict[str, Any] = item_data.get("standard-claims")
-            just_now: datetime = datetime.utcnow()
+            just_now: datetime = datetime.now(timezone.utc)
 
             # is the current token still valid ?
             if just_now > standard_claims.get("exp"):
