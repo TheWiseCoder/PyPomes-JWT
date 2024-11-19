@@ -1,7 +1,7 @@
 import contextlib
 from flask import Request, Response, request, jsonify
 from logging import Logger
-from OpenSSL import crypto
+# from OpenSSL import crypto
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
 from secrets import token_bytes
 from typing import Any, Final, Literal
@@ -21,10 +21,10 @@ JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
 __priv_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
 __pub_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
-if not __priv_key or not __pub_key:
-    pk = crypto.PKey()
-    __priv_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pk)
-    __pub_key = crypto.dump_publickey(crypto.FILETYPE_PEM, pk)
+# if not __priv_key or not __pub_key:
+#     pk = crypto.PKey()
+#     __priv_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pk)
+#     __pub_key = crypto.dump_publickey(crypto.FILETYPE_PEM, pk)
 JWT_RSA_PRIVATE_KEY: Final[bytes] = __priv_key
 JWT_RSA_PUBLIC_KEY: Final[bytes] = __pub_key
 
