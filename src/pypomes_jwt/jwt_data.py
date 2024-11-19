@@ -98,7 +98,7 @@ class JwtData:
                 "access-max-age": access_max_age,
                 "request-timeout": request_timeout,
                 "local-provider": local_provider,
-                "refresh-exp": datetime.now(timezone.utc) + timedelta(seconds=refresh_max_age)
+                "refresh-exp": datetime.now(tz=timezone.utc) + timedelta(seconds=refresh_max_age)
             }
             if algorithm in ["HS256", "HS512"]:
                 control_data["secret-key"] = secret_key
@@ -116,7 +116,8 @@ class JwtData:
                     custom_claims[key] = value
             standard_claims["exp"] = datetime(year=2000,
                                               month=1,
-                                              day=1)
+                                              day=1,
+                                              tzinfo=timezone.utc)
             # store access data
             item_data = {
                 "control-data": control_data,
@@ -190,7 +191,7 @@ class JwtData:
             control_data: dict[str, Any] = item_data.get("control-data")
             custom_claims: dict[str, Any] = item_data.get("custom-claims")
             standard_claims: dict[str, Any] = item_data.get("standard-claims")
-            just_now: datetime = datetime.now(timezone.utc)
+            just_now: datetime = datetime.now(tz=timezone.utc)
 
             # is the current token still valid ?
             if just_now > standard_claims.get("exp"):
