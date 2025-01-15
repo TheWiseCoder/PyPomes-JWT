@@ -233,11 +233,12 @@ def jwt_verify_request(request: Request,
 
 # @flask_app.route(rule="/jwt-service",
 #                  methods=["POST"])
-def jwt_service(service_url: str = None) -> Response:
+def jwt_service(service_url: str = None,
+                service_params: dict[str, Any] = None) -> Response:
     """
     Entry point for obtaining JWT tokens.
 
-    In order to be serviced, the invoker must send, in the body of the request,
+    In order to be serviced, the invoker must send, as parameter *service_params* or in the body of the request,
     a JSON containing:
     {
       "service-url": "<url>",                               - the JWT reference URL (if not as parameter)
@@ -252,7 +253,8 @@ def jwt_service(service_url: str = None) -> Response:
       "expires_in": <seconds-to-expiration>
     }
 
-    :param service_url: the JWT reference URL, alternatively passed in the body's JSON
+    :param service_url: the JWT reference URL, alternatively passed in JSON
+    :param service_params: the optional JSON containing the request parameters (defaults to body's JSON)
     :return: the requested JWT token, along with its duration.
     """
     # declare the return variable
@@ -260,9 +262,10 @@ def jwt_service(service_url: str = None) -> Response:
 
     # obtain the parameters
     # noinspection PyUnusedLocal
-    params: dict[str, Any] = {}
-    with contextlib.suppress(Exception):
-        params = request.get_json()
+    params: dict[str, Any] = service_params or {}
+    if not params:
+        with contextlib.suppress(Exception):
+            params = request.get_json()
 
     # validate the parameters
     valid: bool = False
