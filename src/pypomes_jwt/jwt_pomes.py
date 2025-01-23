@@ -1,7 +1,10 @@
 import contextlib
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from flask import Request, Response, request, jsonify
 from logging import Logger
-# from OpenSSL import crypto
 from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
 from secrets import token_bytes
 from typing import Any, Final, Literal
@@ -19,14 +22,21 @@ JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET
 # must invoke 'jwt_service()' below
 JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
-__priv_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
-__pub_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
-# if not __priv_key or not __pub_key:
-#     pk = crypto.PKey()
-#     __priv_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, pk)
-#     __pub_key = crypto.dump_publickey(crypto.FILETYPE_PEM, pk)
-JWT_RSA_PRIVATE_KEY: Final[bytes] = __priv_key
-JWT_RSA_PUBLIC_KEY: Final[bytes] = __pub_key
+# obtain a RSA private/public key pair
+__priv_bytes: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
+__pub_bytes: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
+if not __priv_bytes or not __pub_bytes:
+    __priv_key: RSAPrivateKey = rsa.generate_private_key(public_exponent=65537,
+                                                         key_size=2058,
+                                                         backend=default_backend())
+    __priv_bytes = __priv_key.private_bytes(encoding=serialization.Encoding.PEM,
+                                            format=serialization.PrivateFormat.TraditionalOpenSSL,
+                                            encryption_algorithm=serialization.NoEncryption())
+    __pub_key: RSAPublicKey = __priv_key.public_key()
+    __pub_bytes = __pub_key.public_bytes(encoding=serialization.Encoding.PEM,
+                                         format=serialization.PublicFormat.SubjectPublicKeyInfo)
+JWT_RSA_PRIVATE_KEY: Final[bytes] = __priv_bytes
+JWT_RSA_PUBLIC_KEY: Final[bytes] = __pub_bytes
 
 # the JWT data object
 __jwt_data: JwtData = JwtData()
@@ -76,7 +86,7 @@ def jwt_set_service_access(reference_url: str,
     :param logger: optional logger
     """
     if logger:
-        logger.debug(msg=f"Register access data for reference URL '{reference_url}'")
+        logger.debug(msg=f"Register access data for '{reference_url}'")
     # extract the extra claims
     pos: int = reference_url.find("?")
     if pos > 0:
@@ -109,7 +119,7 @@ def jwt_remove_service_access(reference_url: str,
     :param logger: optional logger
     """
     if logger:
-        logger.debug(msg=f"Remove access data for reference URL '{reference_url}'")
+        logger.debug(msg=f"Remove access data for '{reference_url}'")
 
     __jwt_data.remove_access_data(reference_url=reference_url,
                                   logger=logger)
@@ -130,7 +140,7 @@ def jwt_get_token(errors: list[str],
     result: str | None = None
 
     if logger:
-        logger.debug(msg=f"Obtain a JWT token for reference URL '{reference_url}'")
+        logger.debug(msg=f"Obtain a JWT token for '{reference_url}'")
 
     try:
         token_data: dict[str, Any] = __jwt_data.get_token_data(reference_url=reference_url,
@@ -167,7 +177,7 @@ def jwt_get_token_data(errors: list[str],
     result: dict[str, Any] | None = None
 
     if logger:
-        logger.debug(msg=f"Retrieve JWT token data for reference URL '{reference_url}'")
+        logger.debug(msg=f"Retrieve JWT token data for '{reference_url}'")
     try:
         result = __jwt_data.get_token_data(reference_url=reference_url,
                                            logger=logger)

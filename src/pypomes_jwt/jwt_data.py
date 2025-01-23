@@ -418,7 +418,9 @@ def jwt_validate_token(token: str,
     :raises InvalidSignatureError: signature does not match the one provided as part of the token
     """
     if logger:
-        logger.debug(msg=f"Verify request for JWT token '{token}'")
+        logger.debug(msg=f"Validate JWT token '{token}'")
     jwt.decode(jwt=token,
                key=key,
                algorithms=[algorithm])
+    if logger:
+        logger.debug(msg=f"Token '{token}' is valid")
