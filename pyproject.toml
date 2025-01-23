@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypomes_jwt"
-version = "0.5.5"
+version = "0.5.8"
 authors = [
   { name="GT Nunes", email="wisecoder01@gmail.com" }
 ]
@@ -20,8 +20,8 @@ classifiers = [
 ]
 dependencies = [
     "PyJWT>=2.10.1",
- #  "PyOpenSSL>=24.2.1", - pending fixing runtime error in jwt_data.py
-    "pypomes_core>=1.6.6"
+    "PyOpenSSL>=25.0.0",
+    "pypomes_core>=1.7.1"
 ]
 
 [project.urls]

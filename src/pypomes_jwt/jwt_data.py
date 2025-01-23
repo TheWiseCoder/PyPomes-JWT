@@ -36,8 +36,8 @@ class JwtData:
                "request-timeout": <float>,   # in seconds - defaults to no timeout
                "access-max-age": <int>,      # in seconds - defaults to JWT_ACCESS_MAX_AGE
                "refresh-exp": <timestamp>,   # expiration time for the refresh operation
-               "service-url": <url>,         # URL to obtain and validate the access tokens
-               "local-provider": <bool>,     # whether 'service-url' is a local endpoint
+               "reference-url": <url>,       # URL to obtain and validate the access tokens
+               "remote-provider": <bool>,    # whether the JWT provider is a remote server
                "secret-key": <bytes>,        # HS secret key
                "private-key": <bytes>,       # RSA private key
                "public-key": <bytes>,        # RSA public key
@@ -54,7 +54,7 @@ class JwtData:
         self.access_data: list[dict[str, dict[str, Any]]] = []
 
     def add_access_data(self,
-                        service_url: str,
+                        reference_url: str,
                         claims: dict[str, Any],
                         algorithm: Literal["HS256", "HS512", "RSA256", "RSA512"],
                         access_max_age: int,
@@ -63,19 +63,16 @@ class JwtData:
                         private_key: bytes,
                         public_key: bytes,
                         request_timeout: float,
-                        local_provider: bool,
+                        remote_provider: bool,
                         logger: Logger = None) -> None:
         """
-        Add to storage the parameters needed to obtain and validate JWT tokens.
-
-        Protocol indication in *service_url* (typically *http:* or *https:*), is disregarded, to guarantee
-        that processing herein will not be affected by in-transit protocol changes.
+        Add to storage the parameters needed to obtain and validate JWT tokens for *reference_url*.
 
         Presently, the *refresh_max_age* data is not relevant, as the authorization parameters in *claims*
         (typically, an acess-key/secret-key pair), have been previously validated elsewhere.
         This situation might change in the future.
 
-        :param service_url: the reference URL
+        :param reference_url: the reference URL
         :param claims: the JWT claimset, as key-value pairs
         :param algorithm: the algorithm used to sign the token with
         :param access_max_age: token duration
@@ -84,20 +81,18 @@ class JwtData:
         :param private_key: private key for RSA authentication
         :param public_key: public key for RSA authentication
         :param request_timeout: timeout for the requests to the service URL
-        :param local_provider: whether 'service_url' is a local endpoint
+        :param remote_provider: whether the JWT provider is a remote server
         :param logger: optional logger
         """
-        # obtain the item in storage
-        item_data: dict[str, dict[str, Any]] = self.retrieve_access_data(service_url=service_url,
-                                                                         logger=logger)
-        if not item_data:
-            # build control data
+        # Do the access data already exist ?
+        if not self.assert_access_data(reference_url=reference_url):
+            # no, build control data
             control_data: dict[str, Any] = {
-                "service-url": service_url,
+                "reference-url": reference_url,
                 "algorithm": algorithm,
                 "access-max-age": access_max_age,
                 "request-timeout": request_timeout,
-                "local-provider": local_provider,
+                "remote-provider": remote_provider,
                 "refresh-exp": datetime.now(tz=timezone.utc) + timedelta(seconds=refresh_max_age)
             }
             if algorithm in ["HS256", "HS512"]:
@@ -127,35 +122,35 @@ class JwtData:
             with self.access_lock:
                 self.access_data.append(item_data)
             if logger:
-                logger.debug(f"JWT data added for '{service_url}': {item_data}")
+                logger.debug(f"JWT data added for '{reference_url}': {item_data}")
         elif logger:
-            logger.warning(f"JWT data already exists for '{service_url}'")
+            logger.warning(f"JWT data already exists for '{reference_url}'")
 
     def remove_access_data(self,
-                           service_url: str,
+                           reference_url: str,
                            logger: Logger) -> None:
         """
-        Remove from storage the access data associated with the given parameters.
+        Remove from storage the access data for *reference_url*.
 
-        :param service_url: the reference URL
+        :param reference_url: the reference URL
         :param logger: optional logger
         """
-        # obtain the item in storage
-        item_data: dict[str, dict[str, Any]] = self.retrieve_access_data(service_url=service_url,
+        # obtain the access data item in storage
+        item_data: dict[str, dict[str, Any]] = self.retrieve_access_data(reference_url=reference_url,
                                                                          logger=logger)
         if item_data:
             with self.access_lock:
                 self.access_data.remove(item_data)
             if logger:
-                logger.debug(f"Removed JWT data for '{service_url}'")
+                logger.debug(f"Removed JWT data for '{reference_url}'")
         elif logger:
-            logger.warning(f"No JWT data found for '{service_url}'")
+            logger.warning(f"No JWT data found for '{reference_url}'")
 
     def get_token_data(self,
-                       service_url: str,
+                       reference_url: str,
                        logger: Logger = None) -> dict[str, Any]:
         """
-        Obtain and return the JWT token associated with *service_url*, along with its duration.
+        Obtain and return the JWT token for *reference_url*, along with its duration.
 
         Structure of the return data:
         {
@@ -163,7 +158,7 @@ class JwtData:
           "expires_in": <seconds-to-expiration>
         }
 
-        :param service_url: the reference URL for obtaining JWT tokens
+        :param reference_url: the reference URL for obtaining JWT tokens
         :param logger: optional logger
         :return: the JWT token data, or 'None' if error
         :raises InvalidTokenError: token is invalid
@@ -176,14 +171,14 @@ class JwtData:
         :raises InvalidIssuerError: 'iss' claim does not match the expected issuer
         :raises InvalidIssuedAtError: 'iat' claim is non-numeric
         :raises MissingRequiredClaimError: a required claim is not contained in the claimset
-        :raises RuntimeError: access data not found for the given 'service_url', or
+        :raises RuntimeError: access data not found for the given *reference_url*, or
                               the remote JWT provider failed to return a token
         """
         # declare the return variable
         result: dict[str, Any]
 
         # obtain the item in storage
-        item_data: dict[str, Any] = self.retrieve_access_data(service_url=service_url,
+        item_data: dict[str, Any] = self.retrieve_access_data(reference_url=reference_url,
                                                               logger=logger)
         # was the JWT data obtained ?
         if item_data:
@@ -196,29 +191,19 @@ class JwtData:
             # is the current token still valid ?
             if just_now > standard_claims.get("exp"):
                 # no, obtain a new token
-                service_url: str = control_data.get("service-url")
+                reference_url: str = control_data.get("reference-url")
                 claims: dict[str, Any] = standard_claims.copy()
                 claims.update(custom_claims)
 
-                # where is the locus of the JWT service ?
-                if control_data.get("local-provider"):
-                    # JWT service is local
-                    claims["exp"] = just_now + timedelta(seconds=control_data.get("access-max-age") + 10)
-                    # may raise an exception
-                    token: str = jwt.encode(payload=claims,
-                                            key=control_data.get("secret-key") or control_data.get("private-key"),
-                                            algorithm=control_data.get("algorithm"))
-                    with self.access_lock:
-                        control_data["access-token"] = token
-                        standard_claims["exp"] = claims.get("exp")
-                else:
-                    # JWT service is remote
-                    if service_url.find("?") > 0:
-                        service_url = service_url[:service_url.index("?")]
+                # where is the locus of the JWT service provider ?
+                if control_data.get("remote-provider"):
+                    # JWT service is being provided by a remote server
+                    if reference_url.find("?") > 0:
+                        reference_url = reference_url[:reference_url.index("?")]
                     claims.pop("exp", None)
                     errors: list[str] = []
                     result = jwt_request_token(errors=errors,
-                                               service_url=service_url,
+                                               reference_url=reference_url,
                                                claims=claims,
                                                timeout=control_data.get("request-timeout"),
                                                logger=logger)
@@ -229,6 +214,16 @@ class JwtData:
                             standard_claims["exp"] = just_now + timedelta(seconds=duration)
                     else:
                         raise RuntimeError(" - ".join(errors))
+                else:
+                    # JWT service is being provided locally
+                    claims["exp"] = just_now + timedelta(seconds=control_data.get("access-max-age") + 10)
+                    # may raise an exception
+                    token: str = jwt.encode(payload=claims,
+                                            key=control_data.get("secret-key") or control_data.get("private-key"),
+                                            algorithm=control_data.get("algorithm"))
+                    with self.access_lock:
+                        control_data["access-token"] = token
+                        standard_claims["exp"] = claims.get("exp")
 
             # return the token
             diff: timedelta = standard_claims.get("exp") - just_now - timedelta(seconds=10)
@@ -237,8 +232,8 @@ class JwtData:
                 "expires_in": math.trunc(diff.total_seconds())
             }
         else:
-            # JWT data not found
-            err_msg: str = f"No JWT data found for {service_url}"
+            # JWT access data not found
+            err_msg: str = f"No JWT access data found for '{reference_url}'"
             if logger:
                 logger.error(err_msg)
             raise RuntimeError(err_msg)
@@ -253,7 +248,7 @@ class JwtData:
 
         :param token: the token to be inspected for claims
         :param logger: optional logger
-        :return: the token's claimset, or 'None' if error
+        :return: the token's claimset, or *None* if error
         :raises InvalidTokenError: token is not valid
         :raises ExpiredSignatureError: token has expired
         """
@@ -280,47 +275,85 @@ class JwtData:
 
         return result
 
-    def retrieve_access_data(self,
-                             service_url: str,
-                             logger: Logger = None) -> dict[str, dict[str, Any]]:
+    def assert_access_data(self,
+                           reference_url: str) -> bool:
+        # noinspection HttpUrlsUsage
         """
-        Retrieve and return the access data in storage corresponding to *service_url*.
+        Assert whether access data exists for *reference_url*.
 
-        Protocol indication in *service_url* (typically *http:* or *https:*), is disregarded, to guarantee
+        For the purpose of locating access data, Protocol indication in *reference_url*
+        (typically, *http://* or *https://*), is disregarded. This guarantees
         that processing herein will not be affected by in-transit protocol changes.
 
-        :param service_url: the reference URL for obtaining JWT tokens
+        :param reference_url: the reference URL for obtaining JWT tokens
+        :return: *True" is access data is in storage, *False* otherwise
+        """
+        # initialize the return variable
+        result: bool = False
+
+        # disregard protocol
+        if reference_url.find("://") > 0:
+            reference_url = reference_url[reference_url.index("://")+3:]
+
+        # assert the data
+        with self.access_lock:
+            for item_data in self.access_data:
+                item_url: str = item_data.get("control-data").get("reference-url")
+                if item_url.find("://") > 0:
+                    item_url = item_url[item_url.index("://")+3:]
+                if reference_url == item_url:
+                    result = True
+                    break
+        
+        return result
+
+    def retrieve_access_data(self,
+                             reference_url: str,
+                             logger: Logger = None) -> dict[str, dict[str, Any]]:
+        # noinspection HttpUrlsUsage
+        """
+        Retrieve and return the access data in storage for *reference_url*.
+
+        For the purpose of locating access data, Protocol indication in *reference_url*
+        (typically, *http://* or *https://*), is disregarded. This guarantees
+        that processing herein will not be affected by in-transit protocol changes.
+
+        :param reference_url: the reference URL for obtaining JWT tokens
         :param logger: optional logger
-        :return: the corresponding item in storage, or 'None' if not found
+        :return: the corresponding item in storage, or *None* if not found
         """
         # initialize the return variable
         result: dict[str, dict[str, Any]] | None = None
+    
+        if logger:
+            logger.debug(f"Retrieve access data for reference URL '{reference_url}'")
 
         # disregard protocol
-        if service_url.find("://") > 0:
-            service_url = service_url[service_url.index("://")+3:]
+        if reference_url.find("://") > 0:
+            reference_url = reference_url[reference_url.index("://")+3:]
 
+        # retrieve the data
         with self.access_lock:
             for item_data in self.access_data:
-                item_url: str = item_data.get("control-data").get("service-url")
+                item_url: str = item_data.get("control-data").get("reference-url")
                 if item_url.find("://") > 0:
                     item_url = item_url[item_url.index("://")+3:]
-                if service_url == item_url:
+                if reference_url == item_url:
                     result = item_data
                     break
         if logger:
-            logger.debug(f"JWT data for '{service_url}': {result}")
+            logger.debug(f"Data is '{result}'")
 
         return result
 
 
 def jwt_request_token(errors: list[str],
-                      service_url: str,
+                      reference_url: str,
                       claims: dict[str, Any],
                       timeout: float = None,
                       logger: Logger = None) -> dict[str, Any]:
     """
-    Obtain and return the JWT token associated with *service_url*, along with its duration.
+    Obtain and return the JWT token associated with *reference_url*, along with its duration.
 
     Expected structure of the return data:
     {
@@ -331,9 +364,9 @@ def jwt_request_token(errors: list[str],
     of the provider issuing the JWT token.
 
     :param errors: incidental errors
-    :param service_url: the reference URL for obtaining JWT tokens
+    :param reference_url: the reference URL for obtaining JWT tokens
     :param claims: the JWT claimset, as expected by the issuing server
-    :param timeout: request timeout, in seconds (defaults to 'None')
+    :param timeout: request timeout, in seconds (defaults to *None*)
     :param logger: optional logger
     """
     # initialize the return variable
@@ -341,9 +374,9 @@ def jwt_request_token(errors: list[str],
 
     # request the JWT token
     if logger:
-        logger.debug(f"POST request JWT token to '{service_url}'")
+        logger.debug(f"POST request JWT token to '{reference_url}'")
     response: Response = requests.post(
-        url=service_url,
+        url=reference_url,
         json=claims,
         timeout=timeout
     )
@@ -356,7 +389,7 @@ def jwt_request_token(errors: list[str],
             logger.debug(f"JWT token obtained: {result}")
     else:
         # no, report the problem
-        err_msg: str = f"POST request of '{service_url}' failed: {response.reason}"
+        err_msg: str = f"POST request of '{reference_url}' failed: {response.reason}"
         if response.text:
             err_msg += f" - {response.text}"
         if logger:

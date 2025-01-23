@@ -16,7 +16,7 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
                                               def_value=43200)
 JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET_KEY",
                                                 def_value=token_bytes(32))
-# must point to 'jwt_service()' below
+# must invoke 'jwt_service()' below
 JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
 __priv_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
@@ -49,7 +49,7 @@ def jwt_needed(func: callable) -> callable:
     return wrapper
 
 
-def jwt_set_service_access(service_url: str,
+def jwt_set_service_access(reference_url: str,
                            claims: dict[str, Any],
                            algorithm: Literal["HS256", "HS512", "RSA256", "RSA512"] = JWT_DEFAULT_ALGORITHM,
                            access_max_age: int = JWT_ACCESS_MAX_AGE,
@@ -58,15 +58,12 @@ def jwt_set_service_access(service_url: str,
                            private_key: bytes = JWT_RSA_PRIVATE_KEY,
                            public_key: bytes = JWT_RSA_PUBLIC_KEY,
                            request_timeout: int = None,
-                           local_provider: bool = False,
+                           remote_provider: bool = True,
                            logger: Logger = None) -> None:
     """
-    Set the data needed to obtain JWT tokens from *service_url*.
+    Set the data needed to obtain JWT tokens from *reference_url*.
 
-    Protocol indication in *service_url* (typically *http:* or *https:*), is disregarded, to guarantee
-    that processing herein will not be affected by in-transit protocol changes.
-
-    :param service_url: the reference URL
+    :param reference_url: the reference URL
     :param claims: the JWT claimset, as key-value pairs
     :param algorithm: the authentication type
     :param access_max_age: token duration, in seconds
@@ -75,20 +72,22 @@ def jwt_set_service_access(service_url: str,
     :param private_key: private key for RSA authentication
     :param public_key: public key for RSA authentication
     :param request_timeout: timeout for the requests to the service URL
-    :param local_provider: whether 'service_url' is a local endpoint
+    :param remote_provider: whether the JWT provider is a remote server
     :param logger: optional logger
     """
+    if logger:
+        logger.debug(msg=f"Register access data for reference URL '{reference_url}'")
     # extract the extra claims
-    pos: int = service_url.find("?")
+    pos: int = reference_url.find("?")
     if pos > 0:
-        if not local_provider:
-            params: list[str] = service_url[pos+1:].split(sep="&")
+        if remote_provider:
+            params: list[str] = reference_url[pos+1:].split(sep="&")
             for param in params:
                 claims[param.split("=")[0]] = param.split("=")[1]
-        service_url = service_url[:pos]
+        reference_url = reference_url[:pos]
 
     # register the JWT service
-    __jwt_data.add_access_data(service_url=service_url,
+    __jwt_data.add_access_data(reference_url=reference_url,
                                claims=claims,
                                algorithm=algorithm,
                                access_max_age=access_max_age,
@@ -97,40 +96,48 @@ def jwt_set_service_access(service_url: str,
                                private_key=private_key,
                                public_key=public_key,
                                request_timeout=request_timeout,
-                               local_provider=local_provider,
+                               remote_provider=remote_provider,
                                logger=logger)
 
 
-def jwt_remove_service_access(service_url: str,
+def jwt_remove_service_access(reference_url: str,
                               logger: Logger = None) -> None:
     """
-    Remove from storage the JWT access data for *service_url*.
+    Remove from storage the JWT access data for *reference_url*.
 
-    :param service_url: the reference URL
+    :param reference_url: the reference URL
     :param logger: optional logger
     """
-    __jwt_data.remove_access_data(service_url=service_url,
+    if logger:
+        logger.debug(msg=f"Remove access data for reference URL '{reference_url}'")
+
+    __jwt_data.remove_access_data(reference_url=reference_url,
                                   logger=logger)
 
 
 def jwt_get_token(errors: list[str],
-                  service_url: str,
+                  reference_url: str,
                   logger: Logger = None) -> str:
     """
-    Obtain and return a JWT token from *service_url*.
+    Obtain and return a JWT token from *reference_url*.
 
     :param errors: incidental error messages
-    :param service_url: the reference URL
+    :param reference_url: the reference URL
     :param logger: optional logger
     :return: the JWT token, or 'None' if an error ocurred
     """
     # inicialize the return variable
     result: str | None = None
 
+    if logger:
+        logger.debug(msg=f"Obtain a JWT token for reference URL '{reference_url}'")
+
     try:
-        token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=service_url,
+        token_data: dict[str, Any] = __jwt_data.get_token_data(reference_url=reference_url,
                                                                logger=logger)
         result = token_data.get("access_token")
+        if logger:
+            logger.debug(f"Token is '{result}'")
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
@@ -140,10 +147,10 @@ def jwt_get_token(errors: list[str],
 
 
 def jwt_get_token_data(errors: list[str],
-                       service_url: str,
+                       reference_url: str,
                        logger: Logger = None) -> dict[str, Any]:
     """
-    Obtain and return the JWT token associated with *service_url*, along with its duration.
+    Obtain and return the JWT token associated with *reference_url*, along with its duration.
 
     Structure of the return data:
     {
@@ -152,16 +159,20 @@ def jwt_get_token_data(errors: list[str],
     }
 
     :param errors: incidental error messages
-    :param service_url: the reference URL for obtaining JWT tokens
+    :param reference_url: the reference URL for obtaining JWT tokens
     :param logger: optional logger
     :return: the JWT token data, or 'None' if error
     """
     # inicialize the return variable
     result: dict[str, Any] | None = None
 
+    if logger:
+        logger.debug(msg=f"Retrieve JWT token data for reference URL '{reference_url}'")
     try:
-        result = __jwt_data.get_token_data(service_url=service_url,
+        result = __jwt_data.get_token_data(reference_url=reference_url,
                                            logger=logger)
+        if logger:
+            logger.debug(msg=f"Data is '{result}'")
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
@@ -184,6 +195,9 @@ def jwt_get_claims(errors: list[str],
     # initialize the return variable
     result: dict[str, Any] | None = None
 
+    if logger:
+        logger.debug(msg=f"Retrieve claims for token '{token}'")
+
     try:
         result = __jwt_data.get_token_claims(token=token)
     except Exception as e:
@@ -205,6 +219,9 @@ def jwt_verify_request(request: Request,
     """
     # initialize the return variable
     result: Response | None = None
+    
+    if logger:
+        logger.debug(msg="Validate a JWT token")
 
     # retrieve the authorization from the request header
     auth_header: str = request.headers.get("Authorization")
@@ -213,6 +230,8 @@ def jwt_verify_request(request: Request,
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT token
         token: str = auth_header.split(" ")[1]
+        if logger:
+            logger.debug(msg=f"Token is '{token}'")
         try:
             jwt_validate_token(token=token,
                                key=JWT_HS_SECRET_KEY or JWT_RSA_PUBLIC_KEY,
@@ -225,23 +244,24 @@ def jwt_verify_request(request: Request,
                               status=401)
     else:
         # no, report the error
+        if logger:
+            logger.error(msg="Request header has no 'Bearer' data")
         result = Response(response="Authorization failed",
                           status=401)
 
     return result
 
 
-# @flask_app.route(rule="/jwt-service",
-#                  methods=["POST"])
-def jwt_service(service_url: str = None,
-                service_params: dict[str, Any] = None) -> Response:
+def jwt_service(reference_url: str = None,
+                service_params: dict[str, Any] = None,
+                logger: Logger = None) -> Response:
     """
     Entry point for obtaining JWT tokens.
 
     In order to be serviced, the invoker must send, as parameter *service_params* or in the body of the request,
     a JSON containing:
     {
-      "service-url": "<url>",                               - the JWT reference URL (if not as parameter)
+      "reference-url": "<url>",                             - the JWT reference URL (if not as parameter)
       "<custom-claim-key-1>": "<custom-claim-value-1>",     - the registered custom claims
       ...
       "<custom-claim-key-n>": "<custom-claim-value-n>"
@@ -253,12 +273,19 @@ def jwt_service(service_url: str = None,
       "expires_in": <seconds-to-expiration>
     }
 
-    :param service_url: the JWT reference URL, alternatively passed in JSON
-    :param service_params: the optional JSON containing the request parameters (defaults to body's JSON)
+    :param reference_url: the JWT reference URL, alternatively passed in JSON
+    :param service_params: the optional JSON containing the request parameters (defaults to JSON in body)
+    :param logger: optional logger
     :return: the requested JWT token, along with its duration.
     """
     # declare the return variable
     result: Response
+
+    if logger:
+        msg: str = "Service a JWT request"
+        if request:
+            msg += f" from '{request.base_url}'"
+        logger.debug(msg=msg)
 
     # obtain the parameters
     # noinspection PyUnusedLocal
@@ -269,10 +296,13 @@ def jwt_service(service_url: str = None,
 
     # validate the parameters
     valid: bool = False
-    if not service_url:
-        service_url = params.get("service-url")
-    if service_url:
-        item_data: dict[str, dict[str, Any]] = __jwt_data.retrieve_access_data(service_url=service_url)
+    if not reference_url:
+        reference_url = params.get("reference-url")
+    if reference_url:
+        if logger:
+            logger.debug(msg=f"Reference URL is '{reference_url}'")
+        item_data: dict[str, dict[str, Any]] = __jwt_data.retrieve_access_data(reference_url=reference_url,
+                                                                               logger=logger)
         if item_data:
             valid = True
             custom_claims: dict[str, Any] = item_data.get("custom-claims")
@@ -284,12 +314,18 @@ def jwt_service(service_url: str = None,
     # obtain the token data
     if valid:
         try:
-            token_data: dict[str, Any] = __jwt_data.get_token_data(service_url=service_url)
+            token_data: dict[str, Any] = __jwt_data.get_token_data(reference_url=reference_url,
+                                                                   logger=logger)
             result = jsonify(token_data)
         except Exception as e:
+            # validation failed
+            if logger:
+                logger.error(msg=str(e))
             result = Response(response=str(e),
                               status=401)
     else:
+        if logger:
+            logger.debug(msg=f"Invalid parameters {service_params}")
         result = Response(response="Invalid parameters",
                           status=401)
 
