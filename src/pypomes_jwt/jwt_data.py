@@ -214,6 +214,7 @@ class JwtData:
             # obtain a new token, if the current token has expired
             just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
             if just_now > reserved_claims.get("exp"):
+                token_jti: str = str_random(size=16)
                 # where is the JWT service provider ?
                 if control_data.get("remote-provider"):
                     # JWT service is being provided by a remote server
@@ -233,25 +234,30 @@ class JwtData:
                     if reply:
                         with self.access_lock:
                             control_data["access-token"] = reply.get("access_token")
-                            reserved_claims["jti"] = str_random(size=16)
+                            reserved_claims["jti"] = token_jti
                             reserved_claims["iat"] = reply.get("created_in")
                             reserved_claims["exp"] = reply.get("created_in") + reply.get("expires_in")
                     else:
                         raise RuntimeError(" - ".join(errors))
                 else:
                     # JWT service is being provided locally
+                    token_iat: int = just_now
+                    token_exp: int = just_now + control_data.get("access-max-age")
                     claims: dict[str, Any] = access_data.get("public-claims").copy()
                     claims.update(reserved_claims)
                     claims.update(custom_claims)
+                    claims["jti"] = token_jti
+                    claims["iat"] = token_iat
+                    claims["exp"] = token_exp
                     # may raise an exception
                     token: str = jwt.encode(payload=claims,
                                             key=(control_data.get("hs-secret-key") or
                                                  control_data.get("rsa-private-key")),
                                             algorithm=control_data.get("algorithm"))
                     with self.access_lock:
-                        reserved_claims["jti"] = str_random(size=16)
-                        reserved_claims["iat"] = just_now
-                        reserved_claims["exp"] = just_now + control_data.get("access-max-age")
+                        reserved_claims["jti"] = token_jti
+                        reserved_claims["iat"] = token_iat
+                        reserved_claims["exp"] = token_exp
                         control_data["access-token"] = token
 
             # return the token
