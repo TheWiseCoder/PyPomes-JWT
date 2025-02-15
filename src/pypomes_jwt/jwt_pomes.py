@@ -19,7 +19,6 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
                                               def_value=43200)
 JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET_KEY",
                                                 def_value=token_bytes(nbytes=32))
-# the endpoint must invoke 'jwt_service()' below
 JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
 
 # obtain a RSA private/public key pair
@@ -49,7 +48,7 @@ def jwt_needed(func: callable) -> callable:
     """
     # ruff: noqa: ANN003
     def wrapper(*args, **kwargs) -> Response:
-        response: Response = jwt_verify_request(request=request) if JWT_ENDPOINT_URL else None
+        response: Response = jwt_verify_request(request=request)
         return response if response else func(*args, **kwargs)
 
     # prevent a rogue error ("View function mapping is overwriting an existing endpoint function")
@@ -137,42 +136,12 @@ def jwt_remove_access(account_id: str,
                                   logger=logger)
 
 
-def jwt_get_token(errors: list[str],
-                  account_id: str,
-                  logger: Logger = None) -> str:
-    """
-    Obtain and return a JWT token for *account_id*.
-
-    :param errors: incidental error messages
-    :param account_id: the account identification
-    :param logger: optional logger
-    :return: the JWT token, or *None* if an error ocurred
-    """
-    # inicialize the return variable
-    result: str | None = None
-
-    if logger:
-        logger.debug(msg=f"Obtain a JWT token for '{account_id}'")
-
-    try:
-        token_data: dict[str, Any] = __jwt_data.get_token_data(account_id=account_id,
-                                                               logger=logger)
-        result = token_data.get("access_token")
-        if logger:
-            logger.debug(f"Token is '{result}'")
-    except Exception as e:
-        if logger:
-            logger.error(msg=str(e))
-        errors.append(str(e))
-
-    return result
-
-
 def jwt_get_token_data(errors: list[str],
                        account_id: str,
+                       superceding_claims: dict[str, Any] = None,
                        logger: Logger = None) -> dict[str, Any]:
     """
-    Obtain and return the JWT token associated with *account_id*, along with its duration.
+    Obtain and return the JWT token data associated with *account_id*.
 
     Structure of the return data:
     {
@@ -183,6 +152,7 @@ def jwt_get_token_data(errors: list[str],
 
     :param errors: incidental error messages
     :param account_id: the account identification
+    :param superceding_claims: if provided, may supercede registered custom claims
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -193,6 +163,7 @@ def jwt_get_token_data(errors: list[str],
         logger.debug(msg=f"Retrieve JWT token data for '{account_id}'")
     try:
         result = __jwt_data.get_token_data(account_id=account_id,
+                                           superceding_claims=superceding_claims,
                                            logger=logger)
         if logger:
             logger.debug(msg=f"Data is '{result}'")
@@ -213,7 +184,7 @@ def jwt_get_token_claims(errors: list[str],
     :param errors: incidental error messages
     :param token: the token to be inspected for claims
     :param logger: optional logger
-    :return: the token's claimset, or 'None' if error
+    :return: the token's claimset, or *None* if error
     """
     # initialize the return variable
     result: dict[str, Any] | None = None
@@ -290,20 +261,61 @@ def jwt_verify_request(request: Request,
     return result
 
 
-def jwt_service(account_id: str = None,
-                service_params: dict[str, Any] = None,
-                logger: Logger = None) -> Response:
+def jwt_claims(token: str = None) -> Response:
     """
-    Entry point for obtaining JWT tokens.
+    REST service entry point for retrieving the claims of a JWT token.
 
-    In order to be serviced, the invoker must send, as parameter *service_params* or in the body of the request:
+    Structure of the return data:
+    {
+      "<claim-1>": <value-of-claim-1>,
+      ...
+      "<claim-n>": <value-of-claim-n>
+    }
+
+    :param token: the JWT token
+    :return: a *Response* containing the requested JWT token claims, or reporting an error
+    """
+    # declare the return variable
+    result: Response
+
+    # retrieve the token
+    # noinspection PyUnusedLocal
+    if not token:
+        token = request.values.get("token")
+        if not token:
+            with contextlib.suppress(Exception):
+                token = request.get_json().get("token")
+
+    # has the token been obtained ?
+    if token:
+        # yes, obtain the token data
+        try:
+            token_claims: dict[str, Any] = __jwt_data.get_token_claims(token=token)
+            result = jsonify(token_claims)
+        except Exception as e:
+            # claims extraction failed
+            result = Response(response=str(e),
+                              status=400)
+    else:
+        # no, report the problem
+        result = Response(response="Invalid parameters",
+                          status=400)
+
+    return result
+
+
+def jwt_token(service_params: dict[str, Any] = None) -> Response:
+    """
+    REST service entry point for obtaining JWT tokens.
+
+    The requester must send, as parameter *service_params* or in the body of the request:
     {
       "account-id": "<string>"                              - required account identification
-      "<custom-claim-key-1>": "<custom-claim-value-1>",     - optional custom claims
+      "<custom-claim-key-1>": "<custom-claim-value-1>",     - optional superceding custom claims
       ...
       "<custom-claim-key-n>": "<custom-claim-value-n>"
     }
-    If provided, the additional custom claims will be sent to the remote provider, if applicable
+    If provided, the superceding custom claims will be sent to the remote provider, if applicable
     (custom claims currently registered for the account may be overridden).
 
 
@@ -314,19 +326,11 @@ def jwt_service(account_id: str = None,
       "expires_in": <seconds-to-expiration>
     }
 
-    :param account_id: the account identification, alternatively passed in JSON
     :param service_params: the optional JSON containing the request parameters (defaults to JSON in body)
-    :param logger: optional logger
-    :return: a *Response* containing the requested JWT token and its duration, or reporting an error
+    :return: a *Response* containing the requested JWT token data, or reporting an error
     """
     # declare the return variable
     result: Response
-
-    if logger:
-        msg: str = "Service a JWT request"
-        if request:
-            msg += f" from '{request.base_url}'"
-        logger.debug(msg=msg)
 
     # retrieve the parameters
     # noinspection PyUnusedLocal
@@ -334,35 +338,21 @@ def jwt_service(account_id: str = None,
     if not params:
         with contextlib.suppress(Exception):
             params = request.get_json()
-    if not account_id:
-        account_id = params.get("account-id")
+    account_id: str | None = params.pop("account-id", None)
 
     # has the account been identified ?
     if account_id:
-        # yes, proceed
-        if logger:
-            logger.debug(msg=f"Account identification is '{account_id}'")
-        item_data: dict[str, dict[str, Any]] = __jwt_data.get_access_data(account_id=account_id,
-                                                                          logger=logger) or {}
-        custom_claims: dict[str, Any] = item_data.get("custom-claims").copy()
-        for key, value in params.items():
-            custom_claims[key] = value
-
-        # obtain the token data
+        # yes, obtain the token data
         try:
             token_data: dict[str, Any] = __jwt_data.get_token_data(account_id=account_id,
-                                                                   logger=logger)
+                                                                   superceding_claims=params)
             result = jsonify(token_data)
         except Exception as e:
             # token validation failed
-            if logger:
-                logger.error(msg=str(e))
             result = Response(response=str(e),
                               status=401)
     else:
         # no, report the problem
-        if logger:
-            logger.debug(msg=f"Invalid parameters {service_params}")
         result = Response(response="Invalid parameters",
                           status=401)
 

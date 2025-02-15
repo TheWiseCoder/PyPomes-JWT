@@ -39,14 +39,14 @@ class JwtData:
                # "aud": <string>         # audience
                # "nbt": <timestamp>      # not before time
              },
-             "public-claims": {
+             "public-claims": {          # public claims (may be empty)
                "birthdate": <string>,    # subject's birth date
                "email": <string>,        # subject's email
                "gender": <string>,       # subject's gender
                "name": <string>,         # subject's name
                "roles": <List[str]>      # subject roles
              },
-             "custom-claims": {          # custom claims
+             "custom-claims": {          # custom claims (may be empty)
                "<custom-claim-key-1>": "<custom-claim-value-1>",
                ...
                "<custom-claim-key-n>": "<custom-claim-value-n>"
@@ -107,7 +107,7 @@ class JwtData:
                 "access-max-age": access_max_age,
                 "request-timeout": request_timeout,
                 "remote-provider": remote_provider,
-                "refresh-exp": datetime.now(tz=timezone.utc).timestamp() + refresh_max_age
+                "refresh-exp": int(datetime.now(tz=timezone.utc).timestamp()) + refresh_max_age
             }
             if algorithm in ["HS256", "HS512"]:
                 control_data["hs-secret-key"] = hs_secret_key
@@ -119,8 +119,8 @@ class JwtData:
             reserved_claims: dict[str, Any] = {
                 "sub": account_id,
                 "iss": reference_url,
-                "exp": "<numeric-UTC-datetime>",
-                "iat": "<numeric-UTC-datetime>",
+                "exp": 0,
+                "iat": 0,
                 "jti": "<jwt-id>",
             }
             custom_claims: dict[str, Any] = {}
@@ -166,6 +166,7 @@ class JwtData:
 
     def get_token_data(self,
                        account_id: str,
+                       superceding_claims: dict[str, Any] = None,
                        logger: Logger = None) -> dict[str, Any]:
         """
         Obtain and return the JWT token for *account_id*, along with its duration.
@@ -178,6 +179,7 @@ class JwtData:
         }
 
         :param account_id: the account identification
+        :param superceding_claims: if provided, may supercede registered custom claims
         :param logger: optional logger
         :return: the JWT token data, or *None* if error
         :raises InvalidTokenError: token is invalid
@@ -197,17 +199,20 @@ class JwtData:
         result: dict[str, Any]
 
         # obtain the item in storage
-        item_data: dict[str, Any] = self.get_access_data(account_id=account_id,
-                                                         logger=logger)
+        access_data: dict[str, Any] = self.get_access_data(account_id=account_id,
+                                                           logger=logger)
         # was the JWT data obtained ?
-        if item_data:
+        if access_data:
             # yes, proceed
-            control_data: dict[str, Any] = item_data.get("control-data")
-            reserved_claims: dict[str, Any] = item_data.get("reserved-claims")
-            custom_claims: dict[str, Any] = item_data.get("custom-claims")
-            just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+            control_data: dict[str, Any] = access_data.get("control-data")
+            reserved_claims: dict[str, Any] = access_data.get("reserved-claims")
+            custom_claims: dict[str, Any] = access_data.get("custom-claims")
+            if superceding_claims:
+                custom_claims = custom_claims.copy()
+                custom_claims.update(superceding_claims)
 
             # obtain a new token, if the current token has expired
+            just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
             if just_now > reserved_claims.get("exp"):
                 # where is the JWT service provider ?
                 if control_data.get("remote-provider"):
@@ -235,9 +240,9 @@ class JwtData:
                         raise RuntimeError(" - ".join(errors))
                 else:
                     # JWT service is being provided locally
-                    claims: dict[str, Any] = item_data.get("public-claims").copy()
-                    claims.update(m=reserved_claims)
-                    claims.update(m=custom_claims)
+                    claims: dict[str, Any] = access_data.get("public-claims").copy()
+                    claims.update(reserved_claims)
+                    claims.update(custom_claims)
                     # may raise an exception
                     token: str = jwt.encode(payload=claims,
                                             key=(control_data.get("hs-secret-key") or
@@ -275,6 +280,7 @@ class JwtData:
         :return: the token's claimset, or *None* if error
         :raises InvalidTokenError: token is not valid
         :raises ExpiredSignatureError: token has expired
+        :raises InvalidAlgorithmError: the specified algorithm is not recognized
         """
         # declare the return variable
         result: dict[str, Any]
@@ -282,14 +288,15 @@ class JwtData:
         if logger:
             logger.debug(msg=f"Retrieve claims for JWT token '{token}'")
 
-        control_data: dict[str, Any] = self.get_access_data(access_token=token,
-                                                            logger=logger)
-        if control_data:
+        access_data: dict[str, Any] = self.get_access_data(access_token=token,
+                                                           logger=logger)
+        if access_data:
+            control_data: dict[str, Any] = access_data.get("control-data")
             if control_data.get("remote-provider"):
                 # provider is remote
                 result = control_data.get("custom-claims")
             else:
-                # may raise InvalidTokenError or ExpiredSignatureError
+                # may raise an exception
                 result = jwt.decode(jwt=token,
                                     key=(control_data.get("hs-secret-key") or
                                          control_data.get("rsa-public-key")),
