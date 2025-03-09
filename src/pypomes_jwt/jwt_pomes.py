@@ -1,40 +1,14 @@
-import contextlib
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
-from datetime import datetime
-from flask import Request, Response, request, jsonify
+import jwt
+from flask import Request, Response, request
 from logging import Logger
-from pypomes_core import APP_PREFIX, env_get_str, env_get_bytes, env_get_int
-from secrets import token_bytes
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
-from .jwt_data import JwtData, jwt_validate_token
-
-JWT_DEFAULT_ALGORITHM: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
-                                                def_value="HS256")
-JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
-                                             def_value=3600)
-JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
-                                              def_value=43200)
-JWT_HS_SECRET_KEY: Final[bytes] = env_get_bytes(key=f"{APP_PREFIX}_JWT_HS_SECRET_KEY",
-                                                def_value=token_bytes(nbytes=32))
-JWT_ENDPOINT_URL: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_ENDPOINT_URL")
-
-# obtain a RSA private/public key pair
-__priv_bytes: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PRIVATE_KEY")
-__pub_bytes: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_RSA_PUBLIC_KEY")
-if not __priv_bytes or not __pub_bytes:
-    __priv_key: RSAPrivateKey = rsa.generate_private_key(public_exponent=65537,
-                                                         key_size=2048)
-    __priv_bytes = __priv_key.private_bytes(encoding=serialization.Encoding.PEM,
-                                            format=serialization.PrivateFormat.PKCS8,
-                                            encryption_algorithm=serialization.NoEncryption())
-    __pub_key: RSAPublicKey = __priv_key.public_key()
-    __pub_bytes = __pub_key.public_bytes(encoding=serialization.Encoding.PEM,
-                                         format=serialization.PublicFormat.SubjectPublicKeyInfo)
-JWT_RSA_PRIVATE_KEY: Final[bytes] = __priv_bytes
-JWT_RSA_PUBLIC_KEY: Final[bytes] = __pub_bytes
+from .jwt_constants import (
+    JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
+    JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
+    JWT_DB_ENGINE, JWT_DB_TABLE
+)
+from .jwt_data import JwtData
 
 # the JWT data object
 __jwt_data: JwtData = JwtData()
@@ -59,23 +33,22 @@ def jwt_needed(func: callable) -> callable:
 
 def jwt_assert_access(account_id: str) -> bool:
     """
-    Determine whether access for *ccount_id* has been established.
+    Determine whether access for *account_id* has been established.
 
     :param account_id: the account identification
     :return: *True* if access data exists for *account_id*, *False* otherwise
     """
-    return __jwt_data.get_access_data(account_id=account_id) is not None
+    return __jwt_data.access_data.get(account_id) is not None
 
 
 def jwt_set_access(account_id: str,
                    reference_url: str,
                    claims: dict[str, Any],
-                   algorithm: Literal["HS256", "HS512", "RSA256", "RSA512"] = JWT_DEFAULT_ALGORITHM,
                    access_max_age: int = JWT_ACCESS_MAX_AGE,
                    refresh_max_age: int = JWT_REFRESH_MAX_AGE,
-                   secret_key: bytes = JWT_HS_SECRET_KEY,
-                   private_key: bytes = JWT_RSA_PRIVATE_KEY,
-                   public_key: bytes = JWT_RSA_PUBLIC_KEY,
+                   grace_interval: int = None,
+                   token_audience: str = None,
+                   token_nonce: str = None,
                    request_timeout: int = None,
                    remote_provider: bool = True,
                    logger: Logger = None) -> None:
@@ -85,12 +58,11 @@ def jwt_set_access(account_id: str,
     :param account_id: the account identification
     :param reference_url: the reference URL (for remote providers, URL to obtain and validate the JWT tokens)
     :param claims: the JWT claimset, as key-value pairs
-    :param algorithm: the authentication type
-    :param access_max_age: token duration, in seconds
-    :param refresh_max_age: duration for the refresh operation, in seconds
-    :param secret_key: secret key for HS authentication
-    :param private_key: private key for RSA authentication
-    :param public_key: public key for RSA authentication
+    :param access_max_age: access token duration, in seconds
+    :param refresh_max_age: refresh token duration, in seconds
+    :param grace_interval: optional time to wait for token to be valid, in seconds
+    :param token_audience: optional audience the token is intended for
+    :param token_nonce: optional value used to associate a client session with a token
     :param request_timeout: timeout for the requests to the reference URL
     :param remote_provider: whether the JWT provider is a remote server
     :param logger: optional logger
@@ -107,52 +79,144 @@ def jwt_set_access(account_id: str,
         reference_url = reference_url[:pos]
 
     # register the JWT service
-    __jwt_data.add_access_data(account_id=account_id,
-                               reference_url=reference_url,
-                               claims=claims,
-                               algorithm=algorithm,
-                               access_max_age=access_max_age,
-                               refresh_max_age=refresh_max_age,
-                               hs_secret_key=secret_key,
-                               rsa_private_key=private_key,
-                               rsa_public_key=public_key,
-                               request_timeout=request_timeout,
-                               remote_provider=remote_provider,
-                               logger=logger)
+    __jwt_data.add_access(account_id=account_id,
+                          reference_url=reference_url,
+                          claims=claims,
+                          access_max_age=access_max_age,
+                          refresh_max_age=refresh_max_age,
+                          grace_interval=grace_interval,
+                          token_audience=token_audience,
+                          token_nonce=token_nonce,
+                          request_timeout=request_timeout,
+                          remote_provider=remote_provider,
+                          logger=logger)
 
 
 def jwt_remove_access(account_id: str,
-                      logger: Logger = None) -> None:
+                      logger: Logger = None) -> bool:
     """
     Remove from storage the JWT access data for *account_id*.
 
     :param account_id: the account identification
     :param logger: optional logger
+    return: *True* if the access data was removed, *False* otherwise
     """
     if logger:
         logger.debug(msg=f"Remove access data for '{account_id}'")
 
-    __jwt_data.remove_access_data(account_id=account_id,
-                                  logger=logger)
+    return __jwt_data.remove_access(account_id=account_id,
+                                    logger=logger)
 
 
-def jwt_get_token_data(errors: list[str],
-                       account_id: str,
-                       superceding_claims: dict[str, Any] = None,
-                       logger: Logger = None) -> dict[str, Any]:
+def jwt_validate_token(errors: list[str] | None,
+                       token: str,
+                       nature: Literal["A", "R"] = None,
+                       logger: Logger = None) -> bool:
     """
-    Obtain and return the JWT token data associated with *account_id*.
+    Verify if *token* ia a valid JWT token.
+
+    Raise an appropriate exception if validation failed.
+
+    :param errors: incidental error messages
+    :param token: the token to be validated
+    :param nature: optionally validate the token's nature ("A": access token, "R": refresh token)
+    :param logger: optional logger
+    :return: *True* if token is valid, *False* otherwise
+    """
+    if logger:
+        logger.debug(msg=f"Validate JWT token '{token}'")
+
+    err_msg: str | None = None
+    try:
+        # raises:
+        #   InvalidTokenError: token is invalid
+        #   InvalidKeyError: authentication key is not in the proper format
+        #   ExpiredSignatureError: token and refresh period have expired
+        #   InvalidSignatureError: signature does not match the one provided as part of the token
+        claims: dict[str, Any] = jwt.decode(jwt=token,
+                                            key=JWT_DECODING_KEY,
+                                            algorithms=[JWT_DEFAULT_ALGORITHM])
+        if nature and "nat" in claims and nature != claims.get("nat"):
+            nat: str = "an access" if nature == "A" else "a refresh"
+            err_msg = f"Token is not {nat} token"
+    except Exception as e:
+        err_msg = str(e)
+
+    if err_msg:
+        if logger:
+            logger.error(msg=err_msg)
+        if isinstance(errors, list):
+            errors.append(err_msg)
+    elif logger:
+        logger.debug(msg=f"Token '{token}' is valid")
+
+    return err_msg is None
+
+
+def jwt_revoke_tokens(errors: list[str] | None,
+                      account_id: str,
+                      logger: Logger = None) -> bool:
+    """
+    Revoke all refresh tokens associated with *account_id*.
+
+    Revoke operations require access to a database table defined by *JWT_DB_TABLE*.
+
+    :param errors: incidental error messages
+    :param account_id: the account identification
+    :param logger: optional logger
+    :return: *True* if operation could be performed, *False* otherwise
+    """
+    # initialize the return variable
+    result: bool = False
+
+    if logger:
+        logger.debug(msg=f"Revoking refresh tokens of '{account_id}'")
+
+    op_errors: list[str] = []
+    if JWT_DB_ENGINE:
+        from pypomes_db import db_delete
+        delete_stmt: str = (f"DELETE FROM {JWT_DB_TABLE} "
+                            f"WHERE account_id = '{account_id}'")
+        db_delete(errors=op_errors,
+                  delete_stmt=delete_stmt,
+                  logger=logger)
+    else:
+        op_errors.append("Database access for token revocation has not been specified")
+
+    if op_errors:
+        if logger:
+            logger.error(msg="; ".join(op_errors))
+        if isinstance(errors, list):
+            errors.extend(op_errors)
+    else:
+        result = True
+
+    return result
+
+
+def jwt_get_tokens(errors: list[str] | None,
+                   account_id: str,
+                   account_claims: dict[str, Any] = None,
+                   refresh_token: str = None,
+                   logger: Logger = None) -> dict[str, Any]:
+    """
+    Issue or refresh, and return, the JWT token data associated with *account_id*.
+
+    If *refresh_token* is provided, its claims are used on issuing the new tokens,
+    and claims in *account_claims*, if any, are ignored.
 
     Structure of the return data:
     {
       "access_token": <jwt-token>,
       "created_in": <timestamp>,
-      "expires_in": <seconds-to-expiration>
+      "expires_in": <seconds-to-expiration>,
+      "refresh_token": <jwt-token>
     }
 
     :param errors: incidental error messages
     :param account_id: the account identification
-    :param superceding_claims: if provided, may supercede registered custom claims
+    :param account_claims: if provided, may supercede registered custom claims
+    :param refresh_token: if provided, defines a token refresh operation
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -161,23 +225,35 @@ def jwt_get_token_data(errors: list[str],
 
     if logger:
         logger.debug(msg=f"Retrieve JWT token data for '{account_id}'")
-    try:
-        result = __jwt_data.get_token_data(account_id=account_id,
-                                           superceding_claims=superceding_claims,
-                                           logger=logger)
+    op_errors: list[str] = []
+    if refresh_token:
+        account_claims = jwt_get_claims(errors=op_errors,
+                                        token=refresh_token)
+        if not op_errors and account_claims.get("nat") != "R":
+            op_errors.extend("Invalid parameters")
+
+    if not op_errors:
+        try:
+            result = __jwt_data.issue_tokens(account_id=account_id,
+                                             account_claims=account_claims)
+            if logger:
+                logger.debug(msg=f"Data is '{result}'")
+        except Exception as e:
+            # token issuing failed
+            op_errors.append(str(e))
+
+    if op_errors:
         if logger:
-            logger.debug(msg=f"Data is '{result}'")
-    except Exception as e:
-        if logger:
-            logger.error(msg=str(e))
-        errors.append(str(e))
+            logger.error("; ".join(op_errors))
+        if isinstance(errors, list):
+            errors.extend(op_errors)
 
     return result
 
 
-def jwt_get_token_claims(errors: list[str],
-                         token: str,
-                         logger: Logger = None) -> dict[str, Any]:
+def jwt_get_claims(errors: list[str] | None,
+                   token: str,
+                   logger: Logger = None) -> dict[str, Any]:
     """
     Obtain and return the claims set of a JWT *token*.
 
@@ -193,11 +269,19 @@ def jwt_get_token_claims(errors: list[str],
         logger.debug(msg=f"Retrieve claims for token '{token}'")
 
     try:
-        result = __jwt_data.get_token_claims(token=token)
+        claims: dict[str, Any] = jwt.decode(jwt=token,
+                                            options={"verify_signature": False})
+        if claims.get("nat") in ["A", "R"]:
+            result = jwt.decode(jwt=token,
+                                key=JWT_DECODING_KEY,
+                                algorithms=[JWT_DEFAULT_ALGORITHM])
+        else:
+            result = claims
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
-        errors.append(str(e))
+        if isinstance(errors, list):
+            errors.append(str(e))
 
     return result
 
@@ -223,30 +307,16 @@ def jwt_verify_request(request: Request,
 
     # was a 'Bearer' authorization obtained ?
     if auth_header and auth_header.startswith("Bearer "):
-        # yes, extract and validate the JWT token
+        # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
         if logger:
             logger.debug(msg=f"Token is '{token}'")
-        # retrieve the reference access data
-        access_data: dict[str, Any] = __jwt_data.get_access_data(access_token=token)
-        if access_data:
-            control_data: dict[str, Any] = access_data.get("control-data")
-            if control_data.get("remote-provider"):
-                # JWT provider is remote
-                if datetime.now().timestamp() > access_data.get("reserved-claims").get("exp"):
-                    err_msg = "Token has expired"
-            else:
-                # JWT was locally provided
-                try:
-                    jwt_validate_token(token=token,
-                                       key=(control_data.get("hs-secret-key") or
-                                            control_data.get("rsa-public-key")),
-                                       algorithm=control_data.get("algorithm"))
-                except Exception as e:
-                    # validation failed
-                    err_msg = str(e)
-        else:
-            err_msg = "No access data found for token"
+        errors: list[str] = []
+        jwt_validate_token(errors=errors,
+                           nature="A",
+                           token=token)
+        if errors:
+            err_msg = "; ".join(errors)
     else:
         # no 'Bearer' found, report the error
         err_msg = "Request header has no 'Bearer' data"
@@ -256,104 +326,6 @@ def jwt_verify_request(request: Request,
         if logger:
             logger.error(msg=err_msg)
         result = Response(response="Authorization failed",
-                          status=401)
-
-    return result
-
-
-def jwt_claims(token: str = None) -> Response:
-    """
-    REST service entry point for retrieving the claims of a JWT token.
-
-    Structure of the return data:
-    {
-      "<claim-1>": <value-of-claim-1>,
-      ...
-      "<claim-n>": <value-of-claim-n>
-    }
-
-    :param token: the JWT token
-    :return: a *Response* containing the requested JWT token claims, or reporting an error
-    """
-    # declare the return variable
-    result: Response
-
-    # retrieve the token
-    # noinspection PyUnusedLocal
-    if not token:
-        token = request.values.get("token")
-        if not token:
-            with contextlib.suppress(Exception):
-                token = request.get_json().get("token")
-
-    # has the token been obtained ?
-    if token:
-        # yes, obtain the token data
-        try:
-            token_claims: dict[str, Any] = __jwt_data.get_token_claims(token=token)
-            result = jsonify(token_claims)
-        except Exception as e:
-            # claims extraction failed
-            result = Response(response=str(e),
-                              status=400)
-    else:
-        # no, report the problem
-        result = Response(response="Invalid parameters",
-                          status=400)
-
-    return result
-
-
-def jwt_token(service_params: dict[str, Any] = None) -> Response:
-    """
-    REST service entry point for obtaining JWT tokens.
-
-    The requester must send, as parameter *service_params* or in the body of the request:
-    {
-      "account-id": "<string>"                              - required account identification
-      "<custom-claim-key-1>": "<custom-claim-value-1>",     - optional superceding custom claims
-      ...
-      "<custom-claim-key-n>": "<custom-claim-value-n>"
-    }
-    If provided, the superceding custom claims will be sent to the remote provider, if applicable
-    (custom claims currently registered for the account may be overridden).
-
-
-    Structure of the return data:
-    {
-      "access_token": <jwt-token>,
-      "created_in": <timestamp>,
-      "expires_in": <seconds-to-expiration>
-    }
-
-    :param service_params: the optional JSON containing the request parameters (defaults to JSON in body)
-    :return: a *Response* containing the requested JWT token data, or reporting an error
-    """
-    # declare the return variable
-    result: Response
-
-    # retrieve the parameters
-    # noinspection PyUnusedLocal
-    params: dict[str, Any] = service_params or {}
-    if not params:
-        with contextlib.suppress(Exception):
-            params = request.get_json()
-    account_id: str | None = params.pop("account-id", None)
-
-    # has the account been identified ?
-    if account_id:
-        # yes, obtain the token data
-        try:
-            token_data: dict[str, Any] = __jwt_data.get_token_data(account_id=account_id,
-                                                                   superceding_claims=params)
-            result = jsonify(token_data)
-        except Exception as e:
-            # token validation failed
-            result = Response(response=str(e),
-                              status=401)
-    else:
-        # no, report the problem
-        result = Response(response="Invalid parameters",
                           status=401)
 
     return result
