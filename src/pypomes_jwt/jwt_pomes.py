@@ -237,7 +237,7 @@ def jwt_get_tokens(errors: list[str] | None,
                                                logger=logger)
             if not op_errors and \
                     (len(recs) == 0 or recs[0][0] != refresh_token):
-                errors.append("Invalid refresh token")
+                op_errors.append("Invalid refresh token")
         if not op_errors:
             account_claims = jwt_get_claims(errors=op_errors,
                                             token=refresh_token)
