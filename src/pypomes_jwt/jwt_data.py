@@ -9,8 +9,8 @@ from threading import Lock
 from typing import Any
 
 from .jwt_constants import (
-    JWT_DEFAULT_ALGORITHM, JWT_ENCODING_KEY,
-    JWT_ROTATE_TOKENS, JWT_DB_ENGINE, JWT_DB_TABLE
+    JWT_DEFAULT_ALGORITHM, JWT_ENCODING_KEY, JWT_ROTATE_TOKENS,
+    JWT_DB_ENGINE, JWT_DB_TABLE, JWT_DB_COL_ACCOUNT, JWT_DB_COL_TOKEN
 )
 
 
@@ -113,7 +113,7 @@ class JwtData:
         with self.access_lock:
             if account_id not in self.access_data:
                 self.access_data[account_id] = {
-                    "reference_url": reference_url,
+                    "reference-url": reference_url,
                     "access-max-age": access_max_age,
                     "refresh-max-age": refresh_max_age,
                     "grace-interval": grace_interval,
@@ -232,14 +232,15 @@ class JwtData:
                         if JWT_ROTATE_TOKENS:
                             db_delete(errors=errors,
                                       delete_stmt=f"DELETE FROM {JWT_DB_TABLE} "
-                                                  f"WHERE account_id = '{account_id}'",
+                                                  f"WHERE {JWT_DB_COL_ACCOUNT} = '{account_id}'",
                                       logger=logger)
                         else:
-                            recs: list[tuple[str]] = db_select(errors=errors,
-                                                               sel_stmt=f"SELECT jwt_token FROM {JWT_DB_TABLE} "
-                                                                        f"WHERE account_id = '{account_id}'",
-                                                               max_count=1,
-                                                               logger=logger)
+                            recs: list[tuple[str]] = \
+                                db_select(errors=errors,
+                                          sel_stmt=f"SELECT token FROM {JWT_DB_TABLE} "
+                                                   f"WHERE {JWT_DB_COL_ACCOUNT} = '{account_id}'",
+                                          max_count=1,
+                                          logger=logger)
                             if recs:
                                 refresh_token = recs[0][0]
                         if errors:
@@ -259,8 +260,8 @@ class JwtData:
                             from pypomes_db import db_insert
                             db_insert(errors=errors,
                                       insert_stmt=f"INSERT INTO {JWT_DB_TABLE}",
-                                      insert_data={"account_id": account_id,
-                                                   "jwt_token": refresh_token},
+                                      insert_data={JWT_DB_COL_ACCOUNT: account_id,
+                                                   JWT_DB_COL_TOKEN: refresh_token},
                                       logger=logger)
                             if errors:
                                 raise RuntimeError(" - ".join(errors))

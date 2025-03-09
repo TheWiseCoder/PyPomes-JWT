@@ -6,7 +6,7 @@ from typing import Any, Literal
 from .jwt_constants import (
     JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
     JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
-    JWT_DB_ENGINE, JWT_DB_TABLE
+    JWT_DB_ENGINE, JWT_DB_TABLE, JWT_DB_COL_ACCOUNT
 )
 from .jwt_data import JwtData
 
@@ -176,7 +176,7 @@ def jwt_revoke_tokens(errors: list[str] | None,
     if JWT_DB_ENGINE:
         from pypomes_db import db_delete
         delete_stmt: str = (f"DELETE FROM {JWT_DB_TABLE} "
-                            f"WHERE account_id = '{account_id}'")
+                            f"WHERE {JWT_DB_COL_ACCOUNT} = '{account_id}'")
         db_delete(errors=op_errors,
                   delete_stmt=delete_stmt,
                   logger=logger)
