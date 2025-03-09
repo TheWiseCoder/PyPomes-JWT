@@ -6,7 +6,7 @@ from typing import Any, Literal
 from .jwt_constants import (
     JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
     JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
-    JWT_DB_ENGINE, JWT_DB_TABLE, JWT_DB_COL_ACCOUNT
+    JWT_DB_ENGINE, JWT_DB_TABLE, JWT_DB_COL_ACCOUNT, JWT_DB_COL_TOKEN
 )
 from .jwt_data import JwtData
 
@@ -227,10 +227,22 @@ def jwt_get_tokens(errors: list[str] | None,
         logger.debug(msg=f"Retrieve JWT token data for '{account_id}'")
     op_errors: list[str] = []
     if refresh_token:
-        account_claims = jwt_get_claims(errors=op_errors,
-                                        token=refresh_token)
-        if not op_errors and account_claims.get("nat") != "R":
-            op_errors.extend("Invalid parameters")
+        # verify whether this refresh token is legitimate
+        if JWT_DB_ENGINE:
+            from pypomes_db import db_select
+            recs: list[tuple[str]] = db_select(errors=op_errors,
+                                               sel_stmt=f"SELECT {JWT_DB_COL_TOKEN} "
+                                                        f"FROM {JWT_DB_TABLE}",
+                                               where_data={JWT_DB_COL_ACCOUNT: f"'{account_id}'"},
+                                               logger=logger)
+            if not op_errors and \
+                    (len(recs) == 0 or recs[0][0] != refresh_token):
+                errors.append("Invalid refresh token")
+        if not op_errors:
+            account_claims = jwt_get_claims(errors=op_errors,
+                                            token=refresh_token)
+            if not op_errors and account_claims.get("nat") != "R":
+                op_errors.append("Invalid parameters")
 
     if not op_errors:
         try:
