@@ -31,6 +31,51 @@ def jwt_needed(func: callable) -> callable:
     return wrapper
 
 
+def jwt_verify_request(request: Request,
+                       logger: Logger = None) -> Response:
+    """
+    Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
+
+    :param request: the request to be verified
+    :param logger: optional logger
+    :return: *None* if the request is valid, otherwise a *Response* object reporting the error
+    """
+    # initialize the return variable
+    result: Response | None = None
+
+    if logger:
+        logger.debug(msg="Validate a JWT token")
+    err_msg: str | None = None
+
+    # retrieve the authorization from the request header
+    auth_header: str = request.headers.get("Authorization")
+
+    # was a 'Bearer' authorization obtained ?
+    if auth_header and auth_header.startswith("Bearer "):
+        # yes, extract and validate the JWT access token
+        token: str = auth_header.split(" ")[1]
+        if logger:
+            logger.debug(msg=f"Token is '{token}'")
+        errors: list[str] = []
+        jwt_validate_token(errors=errors,
+                           nature="A",
+                           token=token)
+        if errors:
+            err_msg = "; ".join(errors)
+    else:
+        # no 'Bearer' found, report the error
+        err_msg = "Request header has no 'Bearer' data"
+
+    # log the error and deny the authorization
+    if err_msg:
+        if logger:
+            logger.error(msg=err_msg)
+        result = Response(response="Authorization failed",
+                          status=401)
+
+    return result
+
+
 def jwt_assert_access(account_id: str) -> bool:
     """
     Determine whether access for *account_id* has been established.
@@ -247,7 +292,8 @@ def jwt_get_tokens(errors: list[str] | None,
     if not op_errors:
         try:
             result = __jwt_data.issue_tokens(account_id=account_id,
-                                             account_claims=account_claims)
+                                             account_claims=account_claims,
+                                             logger=logger)
             if logger:
                 logger.debug(msg=f"Data is '{result}'")
         except Exception as e:
@@ -265,12 +311,43 @@ def jwt_get_tokens(errors: list[str] | None,
 
 def jwt_get_claims(errors: list[str] | None,
                    token: str,
+                   validate: bool = True,
                    logger: Logger = None) -> dict[str, Any]:
     """
     Obtain and return the claims set of a JWT *token*.
 
+    If *validate* is set to *True*, tha following pieces of information are verified:
+      - the token was issued and signed by the local provider, and is not corrupted
+      - the claim 'exp' is present and is in the future
+      - the claim 'nbf' is present and is in the past
+
+    Structure of the returned data:
+      {
+        "header": {
+          "alg": "HS256",
+          "typ": "JWT"
+        },
+        "payload": {
+          "birthdate": "1980-01-01",
+          "email": "jdoe@mail.com",
+          "exp": 1516640454,
+          "iat": 1516239022,
+          "iss": "https://my_id_provider/issue",
+          "jti": "Uhsdfgr67FGH567qwSDF33er89retert",
+          "gender": "M,
+          "name": "John Doe",
+          "nbt": 1516249022
+          "sub": "1234567890",
+          "roles": [
+            "administrator",
+            "operator"
+          ]
+        }
+      }
+
     :param errors: incidental error messages
     :param token: the token to be inspected for claims
+    :param validate: If *True*, verifies the token's data
     :param logger: optional logger
     :return: the token's claimset, or *None* if error
     """
@@ -281,63 +358,30 @@ def jwt_get_claims(errors: list[str] | None,
         logger.debug(msg=f"Retrieve claims for token '{token}'")
 
     try:
-        claims: dict[str, Any] = jwt.decode(jwt=token,
-                                            options={"verify_signature": False})
-        if claims.get("nat") in ["A", "R"]:
-            result = jwt.decode(jwt=token,
-                                key=JWT_DECODING_KEY,
-                                algorithms=[JWT_DEFAULT_ALGORITHM])
+        # retrieve the token's payload
+        if validate:
+            payload: dict[str, Any] = jwt.decode(jwt=token,
+                                                 options={
+                                                     "verify_signature": True,
+                                                     "verify_exp": True,
+                                                     "verify_nbf": True
+                                                 },
+                                                 key=JWT_DECODING_KEY,
+                                                 require=["exp", "nbf"],
+                                                 algorithms=[JWT_DEFAULT_ALGORITHM])
         else:
-            result = claims
+            payload: dict[str, Any] = jwt.decode(jwt=token,
+                                                 options={"verify_signature": False})
+        # retrieve the token's header
+        header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
+        result = {
+            "header": header,
+            "payload": payload
+        }
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
         if isinstance(errors, list):
             errors.append(str(e))
-
-    return result
-
-
-def jwt_verify_request(request: Request,
-                       logger: Logger = None) -> Response:
-    """
-    Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
-
-    :param request: the request to be verified
-    :param logger: optional logger
-    :return: *None* if the request is valid, otherwise a *Response* object reporting the error
-    """
-    # initialize the return variable
-    result: Response | None = None
-
-    if logger:
-        logger.debug(msg="Validate a JWT token")
-    err_msg: str | None = None
-
-    # retrieve the authorization from the request header
-    auth_header: str = request.headers.get("Authorization")
-
-    # was a 'Bearer' authorization obtained ?
-    if auth_header and auth_header.startswith("Bearer "):
-        # yes, extract and validate the JWT access token
-        token: str = auth_header.split(" ")[1]
-        if logger:
-            logger.debug(msg=f"Token is '{token}'")
-        errors: list[str] = []
-        jwt_validate_token(errors=errors,
-                           nature="A",
-                           token=token)
-        if errors:
-            err_msg = "; ".join(errors)
-    else:
-        # no 'Bearer' found, report the error
-        err_msg = "Request header has no 'Bearer' data"
-
-    # log the error and deny the authorization
-    if err_msg:
-        if logger:
-            logger.error(msg=err_msg)
-        result = Response(response="Authorization failed",
-                          status=401)
 
     return result

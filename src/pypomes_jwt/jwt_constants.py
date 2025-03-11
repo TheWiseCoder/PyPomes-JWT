@@ -18,6 +18,7 @@ JWT_DB_CLIENT: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_CLIENT")  # fo
 JWT_DB_DRIVER: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_DRIVER")  # for SQLServer, only
 JWT_DB_TABLE: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
 JWT_DB_COL_ACCOUNT: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
+JWT_DB_COL_HASH: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_HASH")
 JWT_DB_COL_TOKEN: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
 # define the database engine
 __db_engine: str | None = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
@@ -55,6 +56,7 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
                                               def_value=86400)
 JWT_ROTATE_TOKENS: Final[bool] = env_get_bool(key=f"{APP_PREFIX}_JWT_ROTATE_TOKENS",
                                               def_value=True)
+JWT_ACCOUNT_LIMIT: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT")
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
 __encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODE_KEY")
