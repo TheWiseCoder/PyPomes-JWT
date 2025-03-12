@@ -8,7 +8,7 @@ from .jwt_constants import (
 from .jwt_pomes import (
     jwt_needed, jwt_verify_request,
     jwt_get_tokens, jwt_get_claims, jwt_validate_token,
-    jwt_assert_access, jwt_set_access, jwt_remove_access, jwt_revoke_tokens
+    jwt_assert_account, jwt_set_account, jwt_remove_account, jwt_revoke_token
 )
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     # jwt_pomes
     "jwt_needed", "jwt_verify_request",
     "jwt_get_tokens", "jwt_get_claims", "jwt_validate_token",
-    "jwt_assert_access", "jwt_set_access", "jwt_remove_access", "jwt_revoke_tokens"
+    "jwt_assert_account", "jwt_set_account", "jwt_remove_account", "jwt_revoke_token"
 ]
 
 from importlib.metadata import version

@@ -1,3 +1,4 @@
+import hashlib
 import jwt
 from flask import Request, Response, request
 from logging import Logger
@@ -76,7 +77,7 @@ def jwt_verify_request(request: Request,
     return result
 
 
-def jwt_assert_access(account_id: str) -> bool:
+def jwt_assert_account(account_id: str) -> bool:
     """
     Determine whether access for *account_id* has been established.
 
@@ -86,17 +87,17 @@ def jwt_assert_access(account_id: str) -> bool:
     return __jwt_data.access_data.get(account_id) is not None
 
 
-def jwt_set_access(account_id: str,
-                   reference_url: str,
-                   claims: dict[str, Any],
-                   access_max_age: int = JWT_ACCESS_MAX_AGE,
-                   refresh_max_age: int = JWT_REFRESH_MAX_AGE,
-                   grace_interval: int = None,
-                   token_audience: str = None,
-                   token_nonce: str = None,
-                   request_timeout: int = None,
-                   remote_provider: bool = True,
-                   logger: Logger = None) -> None:
+def jwt_set_account(account_id: str,
+                    reference_url: str,
+                    claims: dict[str, Any],
+                    access_max_age: int = JWT_ACCESS_MAX_AGE,
+                    refresh_max_age: int = JWT_REFRESH_MAX_AGE,
+                    grace_interval: int = None,
+                    token_audience: str = None,
+                    token_nonce: str = None,
+                    request_timeout: int = None,
+                    remote_provider: bool = True,
+                    logger: Logger = None) -> None:
     """
     Set the data needed to obtain JWT tokens for *account_id*.
 
@@ -113,7 +114,7 @@ def jwt_set_access(account_id: str,
     :param logger: optional logger
     """
     if logger:
-        logger.debug(msg=f"Register access data for '{account_id}'")
+        logger.debug(msg=f"Register account data for '{account_id}'")
 
     # extract the claims provided in the reference URL's query string
     pos: int = reference_url.find("?")
@@ -124,21 +125,21 @@ def jwt_set_access(account_id: str,
         reference_url = reference_url[:pos]
 
     # register the JWT service
-    __jwt_data.add_access(account_id=account_id,
-                          reference_url=reference_url,
-                          claims=claims,
-                          access_max_age=access_max_age,
-                          refresh_max_age=refresh_max_age,
-                          grace_interval=grace_interval,
-                          token_audience=token_audience,
-                          token_nonce=token_nonce,
-                          request_timeout=request_timeout,
-                          remote_provider=remote_provider,
-                          logger=logger)
+    __jwt_data.add_account(account_id=account_id,
+                           reference_url=reference_url,
+                           claims=claims,
+                           access_max_age=access_max_age,
+                           refresh_max_age=refresh_max_age,
+                           grace_interval=grace_interval,
+                           token_audience=token_audience,
+                           token_nonce=token_nonce,
+                           request_timeout=request_timeout,
+                           remote_provider=remote_provider,
+                           logger=logger)
 
 
-def jwt_remove_access(account_id: str,
-                      logger: Logger = None) -> bool:
+def jwt_remove_account(account_id: str,
+                       logger: Logger = None) -> bool:
     """
     Remove from storage the JWT access data for *account_id*.
 
@@ -149,8 +150,8 @@ def jwt_remove_access(account_id: str,
     if logger:
         logger.debug(msg=f"Remove access data for '{account_id}'")
 
-    return __jwt_data.remove_access(account_id=account_id,
-                                    logger=logger)
+    return __jwt_data.remove_account(account_id=account_id,
+                                     logger=logger)
 
 
 def jwt_validate_token(errors: list[str] | None,
@@ -181,7 +182,7 @@ def jwt_validate_token(errors: list[str] | None,
         claims: dict[str, Any] = jwt.decode(jwt=token,
                                             key=JWT_DECODING_KEY,
                                             algorithms=[JWT_DEFAULT_ALGORITHM])
-        if nature and "nat" in claims and nature != claims.get("nat"):
+        if nature and nature != claims.get("nat"):
             nat: str = "an access" if nature == "A" else "a refresh"
             err_msg = f"Token is not {nat} token"
     except Exception as e:
@@ -198,16 +199,18 @@ def jwt_validate_token(errors: list[str] | None,
     return err_msg is None
 
 
-def jwt_revoke_tokens(errors: list[str] | None,
-                      account_id: str,
-                      logger: Logger = None) -> bool:
+def jwt_revoke_token(errors: list[str] | None,
+                     account_id: str,
+                     refresh_token: str,
+                     logger: Logger = None) -> bool:
     """
-    Revoke all refresh tokens associated with *account_id*.
+    Revoke the *refresh_token* associated with *account_id*.
 
     Revoke operations require access to a database table defined by *JWT_DB_TABLE*.
 
     :param errors: incidental error messages
     :param account_id: the account identification
+    :param refresh_token: the token to be revolked
     :param logger: optional logger
     :return: *True* if operation could be performed, *False* otherwise
     """
@@ -215,16 +218,25 @@ def jwt_revoke_tokens(errors: list[str] | None,
     result: bool = False
 
     if logger:
-        logger.debug(msg=f"Revoking refresh tokens of '{account_id}'")
+        logger.debug(msg=f"Revoking refresh token of '{account_id}'")
 
     op_errors: list[str] = []
     if JWT_DB_ENGINE:
-        from pypomes_db import db_delete
-        delete_stmt: str = (f"DELETE FROM {JWT_DB_TABLE} "
-                            f"WHERE {JWT_DB_COL_ACCOUNT} = '{account_id}'")
-        db_delete(errors=op_errors,
-                  delete_stmt=delete_stmt,
-                  logger=logger)
+        from pypomes_db import db_exists, db_delete
+        # ruff: noqa: S324
+        hasher = hashlib.new(name="md5",
+                             data=refresh_token.encode())
+        token_hash: str = hasher.digest().decode()
+        if db_exists(errors=op_errors,
+                     table=JWT_DB_TABLE,
+                     where_data={"ds_hash": token_hash},
+                     logger=logger):
+            db_delete(errors=errors,
+                      delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
+                      where_data={"ds_hash": token_hash},
+                      logger=logger)
+        elif not op_errors:
+            op_errors.append("Token was not found")
     else:
         op_errors.append("Database access for token revocation has not been specified")
 
@@ -278,7 +290,7 @@ def jwt_get_tokens(errors: list[str] | None,
             recs: list[tuple[str]] = db_select(errors=op_errors,
                                                sel_stmt=f"SELECT {JWT_DB_COL_TOKEN} "
                                                         f"FROM {JWT_DB_TABLE}",
-                                               where_data={JWT_DB_COL_ACCOUNT: f"'{account_id}'"},
+                                               where_data={JWT_DB_COL_ACCOUNT: account_id},
                                                logger=logger)
             if not op_errors and \
                     (len(recs) == 0 or recs[0][0] != refresh_token):
@@ -325,7 +337,8 @@ def jwt_get_claims(errors: list[str] | None,
       {
         "header": {
           "alg": "HS256",
-          "typ": "JWT"
+          "typ": "JWT",
+          "kid": "rt466ytRTYH64577uydhDFGHDYJH2341"
         },
         "payload": {
           "birthdate": "1980-01-01",

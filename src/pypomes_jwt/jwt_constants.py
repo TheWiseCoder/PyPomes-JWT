@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from pypomes_core import (
     APP_PREFIX,
-    env_get_str, env_get_bytes, env_get_int, env_get_bool
+    env_get_str, env_get_bytes, env_get_int
 )
 from secrets import token_bytes
 from typing import Final
@@ -54,8 +54,6 @@ JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_A
 # recommended: at least 2 hours (set to 24 hours)
 JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
                                               def_value=86400)
-JWT_ROTATE_TOKENS: Final[bool] = env_get_bool(key=f"{APP_PREFIX}_JWT_ROTATE_TOKENS",
-                                              def_value=True)
 JWT_ACCOUNT_LIMIT: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT")
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
