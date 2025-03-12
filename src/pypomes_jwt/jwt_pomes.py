@@ -7,7 +7,8 @@ from typing import Any, Literal
 from .jwt_constants import (
     JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
     JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
-    JWT_DB_ENGINE, JWT_DB_TABLE, JWT_DB_COL_ACCOUNT, JWT_DB_COL_TOKEN
+    JWT_DB_ENGINE, JWT_DB_TABLE,
+    JWT_DB_COL_ACCOUNT, JWT_DB_COL_HASH, JWT_DB_COL_TOKEN
 )
 from .jwt_data import JwtData
 
@@ -226,14 +227,14 @@ def jwt_revoke_token(errors: list[str] | None,
         # ruff: noqa: S324
         hasher = hashlib.new(name="md5",
                              data=refresh_token.encode())
-        token_hash: str = hasher.digest().decode()
+        token_hash: str = hasher.digest().hex()
         if db_exists(errors=op_errors,
                      table=JWT_DB_TABLE,
-                     where_data={"ds_hash": token_hash},
+                     where_data={JWT_DB_COL_HASH: token_hash},
                      logger=logger):
             db_delete(errors=errors,
                       delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
-                      where_data={"ds_hash": token_hash},
+                      where_data={JWT_DB_COL_HASH: token_hash},
                       logger=logger)
         elif not op_errors:
             op_errors.append("Token was not found")
@@ -336,7 +337,7 @@ def jwt_get_claims(errors: list[str] | None,
     Structure of the returned data:
       {
         "header": {
-          "alg": "HS256",
+          "alg": "RS256",
           "typ": "JWT",
           "kid": "rt466ytRTYH64577uydhDFGHDYJH2341"
         },
@@ -347,10 +348,10 @@ def jwt_get_claims(errors: list[str] | None,
           "iat": 1516239022,
           "iss": "https://my_id_provider/issue",
           "jti": "Uhsdfgr67FGH567qwSDF33er89retert",
-          "gender": "M,
+          "gender": "M",
           "name": "John Doe",
           "nbt": 1516249022
-          "sub": "1234567890",
+          "sub": "11111111111",
           "roles": [
             "administrator",
             "operator"

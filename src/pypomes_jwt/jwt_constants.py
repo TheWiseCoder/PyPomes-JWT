@@ -47,7 +47,8 @@ JWT_DB_ENGINE: Final[DbEngine] = DbEngine(__db_engine) if __db_engine else None
 
 # one of HS256, HS512, RSA256, RSA512
 JWT_DEFAULT_ALGORITHM: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
-                                                def_value="HS256")
+                                                def_value="RS256")
+
 # recommended: between 5 min and 1 hour (set to 5 min)
 JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
                                              def_value=300)

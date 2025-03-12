@@ -397,8 +397,9 @@ def _jwt_persist_token(errors: list[str],
                 # ruff: noqa: S324
                 hasher = hashlib.new(name="md5",
                                      data=jwt_token.encode())
-                token_hash: str = hasher.digest().decode()
+                token_hash: str = hasher.digest().hex()
                 db_insert(errors=errors,
                           insert_stmt=f"INSERT INTO {JWT_DB_TABLE}",
-                          insert_data={"ds_hash": token_hash,
-                                       "ds_token": jwt_token})
+                          insert_data={JWT_DB_COL_ACCOUNT: account_id,
+                                       JWT_DB_COL_HASH: token_hash,
+                                       JWT_DB_COL_TOKEN: jwt_token})
