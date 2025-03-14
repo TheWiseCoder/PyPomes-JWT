@@ -1,3 +1,4 @@
+import base64
 import jwt
 from flask import Request, Response, request
 from logging import Logger
@@ -198,7 +199,7 @@ def jwt_validate_token(errors: list[str] | None,
                                            logger=logger)
         if recs:
             token_alg = recs[0][0]
-            token_decoder = bytes.fromhex(recs[0][1])
+            token_decoder = base64.urlsafe_b64decode(recs[0][1])
         else:
             op_errors.append("Invalid token")
     else:

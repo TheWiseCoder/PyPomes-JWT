@@ -50,7 +50,7 @@ JWT_ACCOUNT_LIMIT: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
 __encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODE_KEY",
-                                      style="base64")
+                                      encoding="base64url")
 __decoding_key: bytes
 if JWT_DEFAULT_ALGORITHM in ["HS256", "HS512"]:
     if not __encoding_key:

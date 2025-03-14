@@ -1,3 +1,4 @@
+import base64
 import jwt
 import requests
 import string
@@ -452,7 +453,7 @@ def _jwt_persist_token(errors: list[str],
               insert_data={JWT_DB_COL_ACCOUNT: account_id,
                            JWT_DB_COL_TOKEN: jwt_token,
                            JWT_DB_COL_ALGORITHM: JWT_DEFAULT_ALGORITHM,
-                           JWT_DB_COL_DECODER: JWT_DECODING_KEY.hex()},
+                           JWT_DB_COL_DECODER: base64.urlsafe_b64encode(JWT_DECODING_KEY).decode()},
               connection=db_conn,
               logger=logger)
     if errors:
