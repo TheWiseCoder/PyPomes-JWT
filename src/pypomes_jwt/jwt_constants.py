@@ -49,7 +49,7 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
 JWT_ACCOUNT_LIMIT: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT")
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
-__encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODE_KEY",
+__encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODING_KEY",
                                       encoding="base64url")
 __decoding_key: bytes
 if JWT_DEFAULT_ALGORITHM in ["HS256", "HS512"]:
@@ -57,7 +57,7 @@ if JWT_DEFAULT_ALGORITHM in ["HS256", "HS512"]:
         __encoding_key = token_bytes(nbytes=32)
     __decoding_key = __encoding_key
 else:
-    __decoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_DECODE_KEY")
+    __decoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_DECODING_KEY")
     if not __encoding_key or not __decoding_key:
         __priv_key: RSAPrivateKey = rsa.generate_private_key(public_exponent=65537,
                                                              key_size=2048)

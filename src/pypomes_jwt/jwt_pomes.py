@@ -227,7 +227,7 @@ def jwt_validate_token(errors: list[str] | None,
                                                      "verify_nbf": True
                                                  },
                                                  key=token_decoder,
-                                                 require=["exp", "nbf"],
+                                                 require=["exp"],
                                                  algorithms=token_alg)
             if account_id and payload.get("sub") != account_id:
                 op_errors.append("Token does not belong to account")
