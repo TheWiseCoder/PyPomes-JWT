@@ -5,7 +5,9 @@ from pypomes_core import (
     APP_PREFIX,
     env_get_str, env_get_bytes, env_get_int
 )
+from pypomes_db import DbEngine, db_setup
 from secrets import token_bytes
+from sys import stderr
 from typing import Final
 
 # database specs for token persistence
@@ -18,14 +20,14 @@ JWT_DB_CLIENT: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_CLIENT")  # fo
 JWT_DB_DRIVER: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_DRIVER")  # for SQLServer, only
 JWT_DB_TABLE: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
 JWT_DB_COL_ACCOUNT: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
-JWT_DB_COL_HASH: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_HASH")
+JWT_DB_COL_ALGORITHM: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM")
+JWT_DB_COL_DECODER: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER")
+JWT_DB_COL_KID: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID")
 JWT_DB_COL_TOKEN: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
-# define the database engine
-__db_engine: str | None = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
-if __db_engine:
-    from pypomes_db import DbEngine, db_setup, db_assert_access, db_delete
-    from sys import stderr
-    if db_setup(engine=DbEngine(__db_engine),
+
+# define and validate the database engine
+JWT_DB_ENGINE: Final[DbEngine] = DbEngine(env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE"))
+if not db_setup(engine=JWT_DB_ENGINE,
                 db_name=JWT_DB_NAME,
                 db_user=JWT_DB_USER,
                 db_pwd=JWT_DB_PWD,
@@ -33,22 +35,11 @@ if __db_engine:
                 db_port=JWT_DB_PORT,
                 db_client=JWT_DB_CLIENT,
                 db_driver=JWT_DB_DRIVER):
-        __errors: list[str] = []
-        if not db_assert_access(errors=__errors) or \
-            db_delete(errors=__errors,
-                      delete_stmt=f"DELETE FROM {JWT_DB_TABLE}") is None:
-            stderr.write(f"{'; '.join(__errors)}\n")
-            __db_engine = None
-    else:
-        stderr.write("Invalid database parameters\n")
-        __db_engine = None
-# if set to 'None', no further attempt will be made to access the database
-JWT_DB_ENGINE: Final[DbEngine] = DbEngine(__db_engine) if __db_engine else None
+    stderr.write("Invalid database parameters\n")
 
-# one of HS256, HS512, RSA256, RSA512
+# one of HS256, HS512, RS256, RS512
 JWT_DEFAULT_ALGORITHM: Final[str] = env_get_str(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
                                                 def_value="RS256")
-
 # recommended: between 5 min and 1 hour (set to 5 min)
 JWT_ACCESS_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
                                              def_value=300)
@@ -58,7 +49,8 @@ JWT_REFRESH_MAX_AGE: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX
 JWT_ACCOUNT_LIMIT: Final[int] = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT")
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
-__encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODE_KEY")
+__encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODE_KEY",
+                                      style="base64")
 __decoding_key: bytes
 if JWT_DEFAULT_ALGORITHM in ["HS256", "HS512"]:
     if not __encoding_key:
