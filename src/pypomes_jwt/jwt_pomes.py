@@ -1,9 +1,9 @@
-import base64
 import jwt
+from base64 import urlsafe_b64decode
 from flask import Request, Response, request
 from logging import Logger
 from pypomes_db import db_select, db_delete
-from typing import Any, Literal
+from typing import Any
 
 from . import JWT_DB_COL_ACCOUNT
 from .jwt_constants import (
@@ -61,7 +61,7 @@ def jwt_verify_request(request: Request,
             logger.debug(msg="Token was found")
         errors: list[str] = []
         jwt_validate_token(errors=errors,
-                           nature="A",
+                           nature=["A"],
                            token=token)
         if errors:
             err_msg = "; ".join(errors)
@@ -157,17 +157,20 @@ def jwt_remove_account(account_id: str,
 
 def jwt_validate_token(errors: list[str] | None,
                        token: str,
-                       nature: Literal["A", "R"] = None,
+                       nature: list[str] = None,
                        account_id: str = None,
                        logger: Logger = None) -> dict[str, Any] | None:
     """
     Verify if *token* ia a valid JWT token.
 
     Raise an appropriate exception if validation failed.
+    if *nature* is provided, it is checked whether *token* has been locally issued and is of a appropriate nature.
+    A token issued locally has the header claim *kid* starting with "A" (for *Access*) or "R" (for *Refresh*),
+    followed by its id in the token database.
 
     :param errors: incidental error messages
     :param token: the token to be validated
-    :param nature: optionally validate the token's nature ("A": access token, "R": refresh token)
+    :param nature: one of more prefixes identifying the nature of locally issued tokens
     :param account_id: optionally, validate the token's account owner
     :param logger: optional logger
     :return: The token's claims (header and payload) if if is valid, *None* otherwise
@@ -179,17 +182,16 @@ def jwt_validate_token(errors: list[str] | None,
 
     # extract needed data from token header
     token_header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
-    token_kid: int = int(token_header.get("kid") or 0)
+    token_kid: str = token_header.get("kid")
     token_alg: str | None = None
     token_decoder: bytes | None = None
     op_errors: list[str] = []
 
     # retrieve token data from database
-    if (nature == "R" and not token_kid) or (nature == "A" and token_kid):
-        nat: str = "an access" if nature == "A" else "a refresh"
-        op_errors.append(f"Token is not {nat} token")
+    if nature and not (token_kid and token_kid[0:1] in nature):
+        op_errors.append("Invalid token")
     elif token_kid:
-        where_data: dict[str, str] = {JWT_DB_COL_KID: token_kid}
+        where_data: dict[str, Any] = {JWT_DB_COL_KID: int(token_kid[1:])}
         if account_id:
             where_data[JWT_DB_COL_ACCOUNT] = account_id
         recs: list[tuple[str]] = db_select(errors=op_errors,
@@ -199,7 +201,7 @@ def jwt_validate_token(errors: list[str] | None,
                                            logger=logger)
         if recs:
             token_alg = recs[0][0]
-            token_decoder = base64.urlsafe_b64decode(recs[0][1])
+            token_decoder = urlsafe_b64decode(recs[0][1])
         else:
             op_errors.append("Invalid token")
     else:
@@ -215,9 +217,7 @@ def jwt_validate_token(errors: list[str] | None,
             #   ExpiredSignatureError: token and refresh period have expired
             #   InvalidSignatureError: signature does not match the one provided as part of the token
             #   ImmatureSignatureError: 'nbf' or 'iat' claim represents a timestamp in the future
-            #   InvalidAudienceError: 'aud' claim does not match one of the expected audience
             #   InvalidAlgorithmError: the specified algorithm is not recognized
-            #   InvalidIssuerError: 'iss' claim does not match the expected issuer
             #   InvalidIssuedAtError: 'iat' claim is non-numeric
             #   MissingRequiredClaimError: a required claim is not contained in the claimset
             payload: dict[str, Any] = jwt.decode(jwt=token,
@@ -227,7 +227,7 @@ def jwt_validate_token(errors: list[str] | None,
                                                      "verify_nbf": True
                                                  },
                                                  key=token_decoder,
-                                                 require=["exp"],
+                                                 require=["iat", "iss", "exp", "sub"],
                                                  algorithms=token_alg)
             if account_id and payload.get("sub") != account_id:
                 op_errors.append("Token does not belong to account")
@@ -275,15 +275,15 @@ def jwt_revoke_token(errors: list[str] | None,
     op_errors: list[str] = []
     token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
                                                       token=refresh_token,
-                                                      nature="R",
+                                                      nature=["A", "R"],
                                                       account_id=account_id,
                                                       logger=logger)
     if not op_errors:
-        token_kid: int = int(token_claims["header"].get("kid") or 0)
+        token_kid: str = token_claims["header"].get("kid")
         db_delete(errors=op_errors,
                   delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
                   where_data={
-                      JWT_DB_COL_KID: token_kid,
+                      JWT_DB_COL_KID: int(token_kid[1:]),
                       JWT_DB_COL_ACCOUNT: account_id
                   },
                   logger=logger)
@@ -334,7 +334,7 @@ def jwt_get_tokens(errors: list[str] | None,
         # verify whether this refresh token is legitimate
         account_claims = (jwt_validate_token(errors=op_errors,
                                              token=refresh_token,
-                                             nature="R",
+                                             nature=["R"],
                                              account_id=account_id,
                                              logger=logger) or {}).get("payload")
         if account_claims:
@@ -380,7 +380,7 @@ def jwt_get_claims(errors: list[str] | None,
         "header": {
           "alg": "RS256",
           "typ": "JWT",
-          "kid": "1234"
+          "kid": "A1234"
         },
         "payload": {
           "valid-from": <YYYY-MM-DDThh:mm:ss+00:00>

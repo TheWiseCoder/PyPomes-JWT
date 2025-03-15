@@ -1,8 +1,8 @@
-import base64
 import jwt
 import requests
 import string
 import sys
+from base64 import urlsafe_b64encode
 from datetime import datetime, timezone
 from logging import Logger
 from pypomes_core import str_random
@@ -33,11 +33,13 @@ class JwtData:
            "access-max-age": <int>,      # in seconds - defaults to JWT_ACCESS_MAX_AGE
            "refresh-max-age": <int>,     # in seconds - defaults to JWT_REFRESH_MAX_AGE
            "grace-interval": <int>       # time to wait for token to be valid, in seconds
+           # optional
            "token-audience": <string>    # the audience the token is intended for
            "token_nonce": <string>       # value used to associate a client session with a token
            "claims": {
              "valid-from": <string>      # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
              "valid-until": <string>     # token's finish (<YYYY-MM-DDThh:mm:ss+00:00>)
+             # optional
              "birthdate": <string>,      # subject's birth date
              "email": <string>,          # subject's email
              "gender": <string>,         # subject's gender
@@ -63,7 +65,6 @@ class JwtData:
       "jti": <string>           # JWT id
       "sub": <string>           # subject (the account identification)
       "nat": <string>           # nature of token (A: access; R: refresh) - locally issued tokens, only
-      # optional:
       "aud": <string>           # token audience
       "nbt": <timestamp>        # not before time
 
@@ -81,8 +82,10 @@ class JwtData:
     The token header has these items:
       "alg": <string>           # the algorithm used to sign the token (one of 'HS256', 'HS512', 'RSA256', 'RSA512')
       "typ": <string>           # the token type (fixed to 'JWT'
-      "kid": <string>           # a reference to the encoding/decoding keys used
-                                # (if issued by the local server, holds the public key, if assimetric keys were used)
+      "kid": <string>           # a reference to the token type and the key to its location in the token database
+
+    If issued by the local server, "kid" holds the key to the corresponding record in the token database.
+    It starts with *A* for (*Access*) or *R* (for *Refresh*) followed its integer key.
     """
     def __init__(self) -> None:
         """
@@ -242,17 +245,23 @@ class JwtData:
                     # JWT service is being provided locally
                     just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
                     current_claims["iat"] = just_now
-
+                    grace_interval = account_data.get("grace-interval")
+                    if grace_interval:
+                        account_data["nbf"] = just_now + grace_interval
+                        current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["nbf"],
+                                                                              tz=timezone.utc).isoformat()
+                    else:
+                        current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
+                                                                              tz=timezone.utc).isoformat()
                     # issue a candidate refresh token first, and persist it
                     current_claims["exp"] = just_now + account_data.get("refresh-max-age")
-                    current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
-                                                                          tz=timezone.utc).isoformat()
                     current_claims["valid-until"] = datetime.fromtimestamp(timestamp=current_claims["exp"],
                                                                            tz=timezone.utc).isoformat()
                     # may raise an exception
                     refresh_token: str = jwt.encode(payload=current_claims,
                                                     key=JWT_ENCODING_KEY,
-                                                    algorithm=JWT_DEFAULT_ALGORITHM)
+                                                    algorithm=JWT_DEFAULT_ALGORITHM,
+                                                    headers={"kid": "R0"})
                     # obtain a DB connection (may raise an exception)
                     db_conn: Any = db_connect(errors=errors,
                                               logger=logger)
@@ -266,7 +275,7 @@ class JwtData:
                     refresh_token = jwt.encode(payload=current_claims,
                                                key=JWT_ENCODING_KEY,
                                                algorithm=JWT_DEFAULT_ALGORITHM,
-                                               headers={"kid": str(token_id)})
+                                               headers={"kid": f"R{token_id}"})
                     # persist it
                     db_update(errors=errors,
                               update_stmt=f"UPDATE {JWT_DB_TABLE}",
@@ -286,7 +295,8 @@ class JwtData:
                     # may raise an exception
                     access_token: str = jwt.encode(payload=current_claims,
                                                    key=JWT_ENCODING_KEY,
-                                                   algorithm=JWT_DEFAULT_ALGORITHM)
+                                                   algorithm=JWT_DEFAULT_ALGORITHM,
+                                                   headers={"kid": f"A{token_id}"})
                     # return the token data
                     result = {
                         "access_token": access_token,
@@ -453,7 +463,7 @@ def _jwt_persist_token(errors: list[str],
               insert_data={JWT_DB_COL_ACCOUNT: account_id,
                            JWT_DB_COL_TOKEN: jwt_token,
                            JWT_DB_COL_ALGORITHM: JWT_DEFAULT_ALGORITHM,
-                           JWT_DB_COL_DECODER: base64.urlsafe_b64encode(JWT_DECODING_KEY).decode()},
+                           JWT_DB_COL_DECODER: urlsafe_b64encode(JWT_DECODING_KEY).decode()},
               connection=db_conn,
               logger=logger)
     if errors:
