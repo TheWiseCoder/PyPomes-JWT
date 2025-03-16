@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypomes_jwt"
-version = "0.9.2"
+version = "0.9.3"
 authors = [
   { name="GT Nunes", email="wisecoder01@gmail.com" }
 ]

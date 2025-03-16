@@ -263,7 +263,7 @@ def jwt_revoke_token(errors: list[str] | None,
 
     :param errors: incidental error messages
     :param account_id: the account identification
-    :param refresh_token: the token to be revolked
+    :param refresh_token: the token to be revoked
     :param logger: optional logger
     :return: *True* if operation could be performed, *False* otherwise
     """
@@ -327,7 +327,7 @@ def jwt_issue_token(errors: list[str] | None,
     result: str | None = None
 
     if logger:
-        logger.debug(msg=f"Issue a JWT token for '{account_id}'")
+        logger.debug(msg=f"Issuing a JWT token for '{account_id}'")
     op_errors: list[str] = []
 
     try:
@@ -355,7 +355,6 @@ def jwt_issue_token(errors: list[str] | None,
 def jwt_issue_tokens(errors: list[str] | None,
                      account_id: str,
                      account_claims: dict[str, Any] = None,
-                     refresh_token: str = None,
                      logger: Logger = None) -> dict[str, Any]:
     """
     Issue the JWT tokens associated with *account_id*, for access and refresh operations.
@@ -376,7 +375,6 @@ def jwt_issue_tokens(errors: list[str] | None,
     :param errors: incidental error messages
     :param account_id: the account identification
     :param account_claims: if provided, may supercede registered claims
-    :param refresh_token: if provided, defines a token refresh operation
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -384,34 +382,82 @@ def jwt_issue_tokens(errors: list[str] | None,
     result: dict[str, Any] | None = None
 
     if logger:
-        logger.debug(msg=f"Return JWT token data for '{account_id}'")
+        logger.debug(msg=f"Issuing a pair of JWT tokens for '{account_id}'")
+    op_errors: list[str] = []
+
+    try:
+        result = __jwt_registry.issue_tokens(account_id=account_id,
+                                             account_claims=account_claims,
+                                             logger=logger)
+        if logger:
+            logger.debug(msg=f"Token data is '{result}'")
+    except Exception as e:
+        # token issuing failed
+        op_errors.append(str(e))
+
+    if op_errors:
+        if logger:
+            logger.error("; ".join(op_errors))
+        if isinstance(errors, list):
+            errors.extend(op_errors)
+
+    return result
+
+
+def jwt_refresh_tokens(errors: list[str] | None,
+                       account_id: str,
+                       refresh_token: str = None,
+                       logger: Logger = None) -> dict[str, Any]:
+    """
+    Issue the JWT tokens associated with *account_id*, for access and refresh operations.
+
+    The claims in *refresh-token* are used on issuing the new tokens.
+
+    Structure of the return data:
+    {
+      "access_token": <jwt-token>,
+      "created_in": <timestamp>,
+      "expires_in": <seconds-to-expiration>,
+      "refresh_token": <jwt-token>
+    }
+
+    :param errors: incidental error messages
+    :param account_id: the account identification
+    :param refresh_token: the base refresh token
+    :param logger: optional logger
+    :return: the JWT token data, or *None* if error
+    """
+    # inicialize the return variable
+    result: dict[str, Any] | None = None
+
+    if logger:
+        logger.debug(msg=f"Refreshing a pair of JWT tokens for '{account_id}'")
     op_errors: list[str] = []
 
     # verify whether this refresh token is legitimate
     if refresh_token:
-        account_claims = (jwt_validate_token(errors=op_errors,
-                                             token=refresh_token,
-                                             natures=["R"],
-                                             account_id=account_id,
-                                             logger=logger) or {}).get("payload")
-        if account_claims:
+        account_claims: dict[str, Any] = (jwt_validate_token(errors=op_errors,
+                                                             token=refresh_token,
+                                                             natures=["R"],
+                                                             account_id=account_id,
+                                                             logger=logger) or {}).get("payload")
+        # revoke current refresh token
+        if account_claims and jwt_revoke_token(errors=errors,
+                                               account_id=account_id,
+                                               refresh_token=refresh_token,
+                                               logger=logger):
             account_claims.pop("exp", None)
             account_claims.pop("iat", None)
             account_claims.pop("iss", None)
             account_claims.pop("jti", None)
             account_claims.pop("nbt", None)
             account_claims.pop("sub", None)
-
-    if not op_errors:
-        try:
-            result = __jwt_registry.issue_tokens(account_id=account_id,
-                                                 account_claims=account_claims,
-                                                 logger=logger)
-            if logger:
-                logger.debug(msg=f"Token data is '{result}'")
-        except Exception as e:
-            # token issuing failed
-            op_errors.append(str(e))
+            # issue tokens
+            result = jwt_issue_tokens(errors=errors,
+                                      account_id=account_id,
+                                      account_claims=account_claims)
+    else:
+        op_errors.append("Refresh token was not provided")
 
     if op_errors:
         if logger:
