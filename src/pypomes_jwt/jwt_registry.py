@@ -1,5 +1,4 @@
 import jwt
-import requests
 import string
 import sys
 from base64 import urlsafe_b64encode
@@ -7,12 +6,12 @@ from datetime import datetime, timezone
 from logging import Logger
 from pypomes_core import str_random
 from pypomes_db import db_connect, db_commit, db_update, db_delete
-from requests import Response
 from threading import Lock
 from typing import Any
 
-from .jwt_constants import (
-    JWT_DEFAULT_ALGORITHM, JWT_ACCOUNT_LIMIT, JWT_ENCODING_KEY, JWT_DECODING_KEY,
+from . import (
+    JWT_DEFAULT_ALGORITHM, JWT_ACCOUNT_LIMIT,
+    JWT_ENCODING_KEY, JWT_DECODING_KEY,
     JWT_DB_TABLE, JWT_DB_COL_KID, JWT_DB_COL_ACCOUNT,
     JWT_DB_COL_ALGORITHM, JWT_DB_COL_DECODER, JWT_DB_COL_TOKEN
 )
@@ -27,23 +26,20 @@ class JwtRegistry:
       - access_data: dictionary holding the JWT token data, organized by account id:
        {
          <account-id>: {
-           "reference-url":              # the reference URL
-           "remote-provider": <bool>,    # whether the JWT provider is a remote server
-           "request-timeout": <int>,     # in seconds - defaults to no timeout
-           "access-max-age": <int>,      # in seconds - defaults to JWT_ACCESS_MAX_AGE
-           "refresh-max-age": <int>,     # in seconds - defaults to JWT_REFRESH_MAX_AGE
-           "grace-interval": <int>       # time to wait for token to be valid, in seconds
-           "request-timeout": <int>      # timeout for the requests to the reference URL (in seconds)
+           "access-max-age": <int>,         # defaults to JWT_ACCESS_MAX_AGE (in seconds)
+           "refresh-max-age": <int>,        # defaults to JWT_REFRESH_MAX_AGE (in seconds)
+           "grace-interval": <int>,         # time to wait for token to be valid, in seconds
            "claims": {
-             "valid-from": <string>      # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
-             "valid-until": <string>     # token's finish (<YYYY-MM-DDThh:mm:ss+00:00>)
-             # optional
-             "birthdate": <string>,      # subject's birth date
-             "email": <string>,          # subject's email
-             "gender": <string>,         # subject's gender
-             "name": <string>,           # subject's name
-             "roles": <List[str]>,       # subject roles
-             "nonce": <string>,          # used to associate a Client session with a token
+             "iss": <string>,               # token'ss issuer
+             "birthdate": <string>,         # subject's birth date
+             "email": <string>,             # subject's email
+             "gender": <string>,            # subject's gender
+             "name": <string>,              # subject's name
+             "roles": <List[str]>,          # subject roles
+             "nonce": <string>,             # used to associate a Client session with a token
+             # output, only
+             "valid-from": <string>,        # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
+             "valid-until": <string>,       # token's finish (<YYYY-MM-DDThh:mm:ss+00:00>)
              ...
            }
          },
@@ -58,30 +54,30 @@ class JwtRegistry:
 
     Token-related claims are mostly required claims, and convey information about the token itself:
       # required
-      "exp": <timestamp>        # expiration time
-      "iat": <timestamp>        # issued at
-      "iss": <string>           # issuer (for remote providers, URL to obtain and validate the access tokens)
-      "jti": <string>           # JWT id
-      "sub": <string>           # subject (the account identification)
+      "exp": <timestamp>        expiration time
+      "iat": <timestamp>        issued at
+      "iss": <string>           token's issuer
+      "jti": <string>           JWT id
+      "sub": <string>           subject (the account identification)
       # optional
-      "aud": <string>           # token audience
-      "nbt": <timestamp>        # not before time
+      "aud": <string>           token audience
+      "nbt": <timestamp>        not before time
 
     Account-related claims are optional claims, and convey information about the registered account they belong to.
     Alhough they can be freely specified, these are some of the most commonly used claims:
-       "valid-from": <string>   # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
-       "valid-until": <string>  # token's finish (<YYYY-MM-DDThh:mm:ss+00.00>)
-       "birthdate": <string>    # subject's birth date
-       "email": <string>        # subject's email
-       "gender": <string>       # subject's gender
-       "name": <string>         # subject's name
-       "roles": <List[str]>     # subject roles
-       "nonce": <string>        # used to associate a client session with a token
+       "valid-from": <string>   token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
+       "valid-until": <string>  token's finish (<YYYY-MM-DDThh:mm:ss+00.00>)
+       "birthdate": <string>    subject's birth date
+       "email": <string>        subject's email
+       "gender": <string>       subject's gender
+       "name": <string>         subject's name
+       "roles": <List[str]>     subject roles
+       "nonce": <string>        used to associate a client session with a token
 
     The token header has these items:
-      "alg": <string>           # the algorithm used to sign the token (one of *HS256*, *HS51*', *RSA256*, *RSA512*)
-      "typ": <string>           # the token type (fixed to *JWT*
-      "kid": <string>           # a reference to the token type and the key to its location in the token database
+      "alg": <string>           the algorithm used to sign the token (one of *HS256*, *HS51*', *RSA256*, *RSA512*)
+      "typ": <string>           the token type (fixed to *JWT*)
+      "kid": <string>           a token type and key to its location in the token database
 
     If issued by the local server, "kid" holds the key to the corresponding record in the token database,
     if starting with *A* for (*Access*) or *R* (for *Refresh*), followed an integer.
@@ -91,46 +87,36 @@ class JwtRegistry:
         Initizalize the token access data.
         """
         self.access_lock: Lock = Lock()
-        self.access_data: dict[str, Any] = {}
+        self.access_registry: dict[str, Any] = {}
 
     def add_account(self,
                     account_id: str,
-                    reference_url: str,
                     claims: dict[str, Any],
                     access_max_age: int,
                     refresh_max_age: int,
                     grace_interval: int | None,
-                    request_timeout: int | None,
-                    remote_provider: bool | None,
                     logger: Logger = None) -> None:
         """
         Add to storage the parameters needed to produce and validate JWT tokens for *account_id*.
 
         The parameter *claims* may contain account-related claims, only. Ideally, it should contain,
-        at a minimum, *birthdate*, *email*, *gender*, *name*, and *roles*.
-        If the token provider is local, then the token-related claims are created at token issuing time.
-        If the token provider is remote, all claims are sent to it at token request time.
+        at a minimum, *iss*, *birthdate*, *email*, *gender*, *name*, and *roles*.
+        The parameter *refresh_max_age* should be at least 300 seconds greater than *access-max-age*.
 
         :param account_id: the account identification
-        :param reference_url: the reference URL (for remote providers, URL to obtain and validate the JWT tokens)
         :param claims: the JWT claimset, as key-value pairs
-        :param access_max_age: access token duration, in seconds
-        :param refresh_max_age: refresh token duration, in seconds
+        :param access_max_age: access token duration, in seconds (at least 60 seconds)
+        :param refresh_max_age: refresh token duration, in seconds (greater than *access_max_age*)
         :param grace_interval: time to wait for token to be valid, in seconds
-        :param request_timeout: timeout for the requests to the reference URL (in seconds)
-        :param remote_provider: whether the JWT provider is a remote server
         :param logger: optional logger
         """
         # build and store the access data for the account
         with self.access_lock:
-            if account_id not in self.access_data:
-                self.access_data[account_id] = {
-                    "reference-url": reference_url,
+            if account_id not in self.access_registry:
+                self.access_registry[account_id] = {
                     "access-max-age": access_max_age,
                     "refresh-max-age": refresh_max_age,
                     "grace-interval": grace_interval,
-                    "request-timeout": request_timeout,
-                    "remote-provider": remote_provider,
                     "claims": claims or {}
                 }
                 if logger:
@@ -151,7 +137,7 @@ class JwtRegistry:
         # remove from internal storage
         account_data: dict[str, Any] | None
         with self.access_lock:
-            account_data = self.access_data.pop(account_id, None)
+            account_data = self.access_registry.pop(account_id, None)
 
         # remove from database
         db_delete(errors=None,
@@ -195,8 +181,6 @@ class JwtRegistry:
         if not isinstance(nature, str) or \
                 len(nature) != 1 or nature < "A" or nature > "Z":
             err_msg: str = f"Invalid nature '{nature}'"
-        elif not isinstance(claims, dict) or "iss" not in claims:
-            err_msg = f"invalid claims '{claims}'"
         elif not isinstance(duration, int) or duration < 60:
             err_msg = f"Invalid duration '{duration}'"
         if err_msg:
@@ -209,11 +193,14 @@ class JwtRegistry:
                                                                logger=logger)
         # issue the token
         current_claims: dict[str, Any] = {}
+        iss: str = account_data["claims"].get("iss")
+        if iss:
+            current_claims["iss"] = iss
         if claims:
             current_claims.update(claims)
+
         current_claims["jti"] = str_random(size=32,
                                            chars=string.ascii_letters + string.digits)
-        current_claims["iss"] = account_data.get("reference-url")
         current_claims["sub"] = account_id
         just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
         current_claims["iat"] = just_now
@@ -240,7 +227,7 @@ class JwtRegistry:
         """
         Issue and return a JWT token pair associated with *account_id*.
 
-        These claims are ignored, if specified in *account_claims*: *iat*, *iss*, *exp*, *jti*, *nbf*, and *sub*.
+        These claims are ignored, if specified in *account_claims*: *iat*, *exp*, *jti*, *nbf*, and *sub*.
         Other claims specified therein may supercede registered account-related claims.
 
         Structure of the return data:
@@ -257,97 +244,79 @@ class JwtRegistry:
         :return: the JWT token data
         :raises RuntimeError: invalid account id, or error accessing the token database
         """
-        # initialize the return variable
-        result: dict[str, Any] | None = None
-
         # process the account data in storage
         with (self.access_lock):
             account_data: dict[str, Any] = self.__get_account_data(account_id=account_id,
                                                                    logger=logger)
-            current_claims: dict[str, Any] = account_data.get("claims").copy()
+            current_claims: dict[str, Any] = account_data["claims"].copy()
             if account_claims:
                 current_claims.update(account_claims)
             current_claims["jti"] = str_random(size=32,
                                                chars=string.ascii_letters + string.digits)
             current_claims["sub"] = account_id
-            current_claims["iss"] = account_data.get("reference-url")
             errors: list[str] = []
 
-            # where is the JWT service provider ?
-            if account_data.get("remote-provider"):
-                # JWT service is being provided by a remote server
-                result = _jwt_request_token(errors=errors,
-                                            reference_url=current_claims.get("iss"),
-                                            claims=current_claims,
-                                            timeout=account_data.get("request-timeout"),
-                                            logger=logger)
-                if errors:
-                    raise RuntimeError("; ".join(errors))
+            just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+            current_claims["iat"] = just_now
+            grace_interval = account_data.get("grace-interval")
+            if grace_interval:
+                current_claims["nbf"] = just_now + grace_interval
+                current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["nbf"],
+                                                                      tz=timezone.utc).isoformat()
             else:
-                # JWT service is being provided locally
-                just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
-                current_claims["iat"] = just_now
-                grace_interval = account_data.get("grace-interval")
-                if grace_interval:
-                    current_claims["nbf"] = just_now + grace_interval
-                    current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["nbf"],
-                                                                          tz=timezone.utc).isoformat()
-                else:
-                    current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
-                                                                          tz=timezone.utc).isoformat()
-                # issue a candidate refresh token first, and persist it
-                current_claims["exp"] = just_now + account_data.get("refresh-max-age")
-                current_claims["valid-until"] = datetime.fromtimestamp(timestamp=current_claims["exp"],
-                                                                       tz=timezone.utc).isoformat()
-                # may raise an exception
-                refresh_token: str = jwt.encode(payload=current_claims,
-                                                key=JWT_ENCODING_KEY,
-                                                algorithm=JWT_DEFAULT_ALGORITHM,
-                                                headers={"kid": "R0"})
-                # obtain a DB connection (may raise an exception)
-                db_conn: Any = db_connect(errors=errors,
-                                          logger=logger)
-                # persist the candidate token (may raise an exception)
-                token_id: int = _jwt_persist_token(errors=errors,
-                                                   account_id=account_id,
-                                                   jwt_token=refresh_token,
-                                                   db_conn=db_conn,
-                                                   logger=logger)
-                # issue the definitive refresh token
-                refresh_token = jwt.encode(payload=current_claims,
+                current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
+                                                                      tz=timezone.utc).isoformat()
+            # issue a candidate refresh token first, and persist it
+            current_claims["exp"] = just_now + account_data.get("refresh-max-age")
+            current_claims["valid-until"] = datetime.fromtimestamp(timestamp=current_claims["exp"],
+                                                                   tz=timezone.utc).isoformat()
+            # may raise an exception
+            refresh_token: str = jwt.encode(payload=current_claims,
+                                            key=JWT_ENCODING_KEY,
+                                            algorithm=JWT_DEFAULT_ALGORITHM,
+                                            headers={"kid": "R0"})
+            # obtain a DB connection (may raise an exception)
+            db_conn: Any = db_connect(errors=errors,
+                                      logger=logger)
+            # persist the candidate token (may raise an exception)
+            token_id: int = _jwt_persist_token(errors=errors,
+                                               account_id=account_id,
+                                               jwt_token=refresh_token,
+                                               db_conn=db_conn,
+                                               logger=logger)
+            # issue the definitive refresh token
+            refresh_token = jwt.encode(payload=current_claims,
+                                       key=JWT_ENCODING_KEY,
+                                       algorithm=JWT_DEFAULT_ALGORITHM,
+                                       headers={"kid": f"R{token_id}"})
+            # persist it
+            db_update(errors=errors,
+                      update_stmt=f"UPDATE {JWT_DB_TABLE}",
+                      update_data={JWT_DB_COL_TOKEN: refresh_token},
+                      where_data={JWT_DB_COL_KID: token_id},
+                      connection=db_conn,
+                      logger=logger)
+            # commit the transaction
+            db_commit(errors=errors,
+                      connection=db_conn,
+                      logger=logger)
+            if errors:
+                raise RuntimeError("; ".join(errors))
+
+            # issue the access token
+            current_claims["exp"] = just_now + account_data.get("access-max-age")
+            # may raise an exception
+            access_token: str = jwt.encode(payload=current_claims,
                                            key=JWT_ENCODING_KEY,
                                            algorithm=JWT_DEFAULT_ALGORITHM,
-                                           headers={"kid": f"R{token_id}"})
-                # persist it
-                db_update(errors=errors,
-                          update_stmt=f"UPDATE {JWT_DB_TABLE}",
-                          update_data={JWT_DB_COL_TOKEN: refresh_token},
-                          where_data={JWT_DB_COL_KID: token_id},
-                          connection=db_conn,
-                          logger=logger)
-                # commit the transaction
-                db_commit(errors=errors,
-                          connection=db_conn,
-                          logger=logger)
-                if errors:
-                    raise RuntimeError("; ".join(errors))
-
-                # issue the access token
-                current_claims["exp"] = just_now + account_data.get("access-max-age")
-                # may raise an exception
-                access_token: str = jwt.encode(payload=current_claims,
-                                               key=JWT_ENCODING_KEY,
-                                               algorithm=JWT_DEFAULT_ALGORITHM,
-                                               headers={"kid": f"A{token_id}"})
-                # return the token data
-                result = {
-                    "access_token": access_token,
-                    "created_in": current_claims.get("iat"),
-                    "expires_in": current_claims.get("exp"),
-                    "refresh_token": refresh_token
-                }
-
-        return result
+                                           headers={"kid": f"A{token_id}"})
+            # return the token data
+            return {
+                "access_token": access_token,
+                "created_in": current_claims.get("iat"),
+                "expires_in": current_claims.get("exp"),
+                "refresh_token": refresh_token
+            }
 
     def __get_account_data(self,
                            account_id: str,
@@ -359,7 +328,7 @@ class JwtRegistry:
         :raises RuntimeError: No JWT access data exists for *account_id*
         """
         # retrieve the access data
-        result: dict[str, Any] = self.access_data.get(account_id)
+        result: dict[str, Any] = self.access_registry.get(account_id)
         if not result:
             # JWT access data not found
             err_msg: str = f"No JWT access data found for '{account_id}'"
@@ -368,60 +337,6 @@ class JwtRegistry:
             raise RuntimeError(err_msg)
 
         return result
-
-
-def _jwt_request_token(errors: list[str],
-                       reference_url: str,
-                       claims: dict[str, Any],
-                       timeout: int = None,
-                       logger: Logger = None) -> dict[str, Any]:
-    """
-    Obtain and return the JWT token from *reference_url*, along with its duration.
-
-    Expected structure of the return data:
-    {
-      "access_token": <jwt-token>,
-      "created_in": <timestamp>,
-      "expires_in": <seconds-to-expiration>,
-      "refresh_token": <token>
-    }
-    It is up to the invoker to make sure that the *claims* data conform to the requirements
-    of the provider issuing the JWT token.
-
-    :param errors: incidental errors
-    :param reference_url: the reference URL for obtaining JWT tokens
-    :param claims: the JWT claimset, as expected by the issuing server
-    :param timeout: request timeout, in seconds (defaults to *None*)
-    :param logger: optional logger
-    """
-    # initialize the return variable
-    result: dict[str, Any] | None = None
-
-    # request the JWT token
-    if logger:
-        logger.debug(f"POST request JWT token to '{reference_url}'")
-    response: Response = requests.post(
-        url=reference_url,
-        json=claims,
-        timeout=timeout
-    )
-
-    # was the request successful ?
-    if response.status_code in [200, 201, 202]:
-        # yes, save the access token data returned
-        result = response.json()
-        if logger:
-            logger.debug(f"JWT token obtained: {result}")
-    else:
-        # no, report the problem
-        err_msg: str = f"POST request to '{reference_url}' failed: {response.reason}"
-        if response.text:
-            err_msg += f" - {response.text}"
-        if logger:
-            logger.error(err_msg)
-        errors.append(err_msg)
-
-    return result
 
 
 def _jwt_persist_token(errors: list[str],
@@ -472,7 +387,6 @@ def _jwt_persist_token(errors: list[str],
         token_kid: int = rec[0]
         token_claims: dict[str, Any] = jwt_get_claims(errors=errors,
                                                       token=token,
-                                                      validate=False,
                                                       logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))

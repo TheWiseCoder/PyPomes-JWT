@@ -5,11 +5,11 @@ from logging import Logger
 from pypomes_db import db_select, db_delete
 from typing import Any
 
-from . import JWT_DB_COL_ACCOUNT
-from .jwt_constants import (
+from . import (
     JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
     JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
-    JWT_DB_TABLE, JWT_DB_COL_KID, JWT_DB_COL_ALGORITHM, JWT_DB_COL_DECODER
+    JWT_DB_TABLE, JWT_DB_COL_KID,
+    JWT_DB_COL_ACCOUNT, JWT_DB_COL_ALGORITHM, JWT_DB_COL_DECODER
 )
 from .jwt_registry import JwtRegistry
 
@@ -85,54 +85,39 @@ def jwt_assert_account(account_id: str) -> bool:
     :param account_id: the account identification
     :return: *True* if access data exists for *account_id*, *False* otherwise
     """
-    return __jwt_registry.access_data.get(account_id) is not None
+    return __jwt_registry.access_registry.get(account_id) is not None
 
 
 def jwt_set_account(account_id: str,
-                    reference_url: str,
                     claims: dict[str, Any],
                     access_max_age: int = JWT_ACCESS_MAX_AGE,
                     refresh_max_age: int = JWT_REFRESH_MAX_AGE,
                     grace_interval: int = None,
-                    request_timeout: int = None,
-                    remote_provider: bool = None,
                     logger: Logger = None) -> None:
     """
-    Set the data needed to obtain JWT tokens for *account_id*.
+    Establish the data needed to obtain JWT tokens for *account_id*.
+
+    The parameter *claims* may contain account-related claims, only. Ideally, it should contain,
+    at a minimum, *iss*, *birthdate*, *email*, *gender*, *name*, and *roles*.
+    It is enforced that the parameter *refresh_max_age* should be at least 300 seconds greater
+    than *access-max-age*.
 
     :param account_id: the account identification
-    :param reference_url: the reference URL (for remote providers, URL to obtain and validate the JWT tokens)
     :param claims: the JWT claimset, as key-value pairs
     :param access_max_age: access token duration, in seconds
     :param refresh_max_age: refresh token duration, in seconds
     :param grace_interval: optional time to wait for token to be valid, in seconds
-    :param request_timeout: timeout for the requests to the reference URL
-    :param remote_provider: whether the JWT provider is a remote server
     :param logger: optional logger
     """
     if logger:
-        logger.debug(msg=f"Register account data for '{account_id}'")
-
-    # extract the claims provided in the reference URL's query string
-    pos: int = reference_url.find("?")
-    if pos > 0:
-        claims = claims or {}
-        params: list[str] = reference_url[pos+1:].split(sep="&")
-        for param in params:
-            key: str = param.split("=")[0]
-            value: str = param.split("=")[1]
-            claims[key] = value
-        reference_url = reference_url[:pos]
+        logger.debug(msg=f"Registering account data for '{account_id}'")
 
     # register the JWT service
     __jwt_registry.add_account(account_id=account_id,
-                               reference_url=reference_url,
                                claims=claims,
                                access_max_age=access_max_age,
-                               refresh_max_age=refresh_max_age,
+                               refresh_max_age=max(refresh_max_age, access_max_age + 300),
                                grace_interval=grace_interval,
-                               request_timeout=request_timeout,
-                               remote_provider=remote_provider,
                                logger=logger)
 
 
@@ -160,10 +145,12 @@ def jwt_validate_token(errors: list[str] | None,
     """
     Verify if *token* ia a valid JWT token.
 
-    Raise an appropriate exception if validation failed.
-    if *nature* is provided, verify whether *token* has been locally issued and is of a appropriate nature.
+    Raise an appropriate exception if validation failed. Attempt to validate non locally issued tokens
+    will not succeed. if *nature* is provided, validate whether *token* is of that nature.
     A token issued locally has the header claim *kid* starting with *A* (for *Access*) or *R* (for *Refresh*),
     followed by its id in the token database, or as a single letter in the range *[B-Z]*, less *R*.
+    If the *kid* claim contains such an id, then the cryptographic key needed for validation
+    will be obtained from the token database. Otherwise, the current decoding key is used.
 
     :param errors: incidental error messages
     :param token: the token to be validated
@@ -252,7 +239,7 @@ def jwt_validate_token(errors: list[str] | None,
 
 def jwt_revoke_token(errors: list[str] | None,
                      account_id: str,
-                     refresh_token: str,
+                     token: str,
                      logger: Logger = None) -> bool:
     """
     Revoke the *refresh_token* associated with *account_id*.
@@ -261,7 +248,7 @@ def jwt_revoke_token(errors: list[str] | None,
 
     :param errors: incidental error messages
     :param account_id: the account identification
-    :param refresh_token: the token to be revoked
+    :param token: the token to be revoked
     :param logger: optional logger
     :return: *True* if operation could be performed, *False* otherwise
     """
@@ -273,7 +260,7 @@ def jwt_revoke_token(errors: list[str] | None,
 
     op_errors: list[str] = []
     token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
-                                                      token=refresh_token,
+                                                      token=token,
                                                       account_id=account_id,
                                                       logger=logger)
     if not op_errors:
@@ -432,24 +419,26 @@ def jwt_refresh_tokens(errors: list[str] | None,
         logger.debug(msg=f"Refreshing a JWT token pair for '{account_id}'")
     op_errors: list[str] = []
 
-    # verify whether this refresh token is legitimate
+    # assert the refresh token
     if refresh_token:
-        account_claims: dict[str, Any] = (jwt_validate_token(errors=op_errors,
-                                                             token=refresh_token,
-                                                             nature="R",
-                                                             account_id=account_id,
-                                                             logger=logger) or {}).get("payload")
-        # revoke current refresh token
-        if account_claims and jwt_revoke_token(errors=errors,
+        # is the refresh token valid ?
+        account_claims = jwt_validate_token(errors=op_errors,
+                                            token=refresh_token,
+                                            nature="R",
+                                            account_id=account_id,
+                                            logger=logger)
+        # if it is, revoke current refresh token
+        if account_claims and jwt_revoke_token(errors=op_errors,
                                                account_id=account_id,
-                                               refresh_token=refresh_token,
+                                               token=refresh_token,
                                                logger=logger):
             # issue tokens
-            result = jwt_issue_tokens(errors=errors,
+            result = jwt_issue_tokens(errors=op_errors,
                                       account_id=account_id,
                                       account_claims=account_claims,
                                       logger=logger)
     else:
+        # refresh token not found
         op_errors.append("Refresh token was not provided")
 
     if op_errors:
@@ -463,17 +452,13 @@ def jwt_refresh_tokens(errors: list[str] | None,
 
 def jwt_get_claims(errors: list[str] | None,
                    token: str,
-                   validate: bool = False,
                    logger: Logger = None) -> dict[str, Any] | None:
     """
-    Obtain and return the claims set of a JWT *token*.
+    Retrieve and return the claims set of a JWT *token*.
 
-    If *validate* is set to *True*, tha following pieces of information are verified:
-      - the token was issued and signed by the local provider, and is not corrupted
-      - the claim 'exp' is present and is in the future
-      - the claim 'nbf' is present and is in the past
+    Any valid JWT token may be provided in *token*, as this operation is not restricted to locally issued tokens.
 
-    Structure of the returned data:
+    Structure of the returned data, for locally issued tokens:
       {
         "header": {
           "alg": "RS256",
@@ -487,7 +472,7 @@ def jwt_get_claims(errors: list[str] | None,
           "email": "jdoe@mail.com",
           "exp": 1516640454,
           "iat": 1516239022,
-          "iss": "https://my_id_provider/issue",
+          "iss": "my_jwt_provider.com",
           "jti": "Uhsdfgr67FGH567qwSDF33er89retert",
           "gender": "M",
           "name": "John Doe",
@@ -502,7 +487,6 @@ def jwt_get_claims(errors: list[str] | None,
 
     :param errors: incidental error messages
     :param token: the token to be inspected for claims
-    :param validate: If *True*, verifies the token's data (defaults to *False*)
     :param logger: optional logger
     :return: the token's claimset, or *None* if error
     """
@@ -513,19 +497,13 @@ def jwt_get_claims(errors: list[str] | None,
         logger.debug(msg="Retrieve claims for token")
 
     try:
-        # retrieve the token's claims
-        if validate:
-            result = jwt_validate_token(errors=errors,
-                                        token=token,
-                                        logger=logger)
-        else:
-            header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
-            payload: dict[str, Any] = jwt.decode(jwt=token,
-                                                 options={"verify_signature": False})
-            result = {
-                "header": header,
-                "payload": payload
-            }
+        header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
+        payload: dict[str, Any] = jwt.decode(jwt=token,
+                                             options={"verify_signature": False})
+        result = {
+            "header": header,
+            "payload": payload
+        }
     except Exception as e:
         if logger:
             logger.error(msg=str(e))
