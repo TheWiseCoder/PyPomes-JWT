@@ -11,10 +11,10 @@ from .jwt_constants import (
     JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
     JWT_DB_TABLE, JWT_DB_COL_KID, JWT_DB_COL_ALGORITHM, JWT_DB_COL_DECODER
 )
-from .jwt_data import JwtData
+from .jwt_registry import JwtRegistry
 
 # the JWT data object
-__jwt_data: JwtData = JwtData()
+__jwt_registry: JwtRegistry = JwtRegistry()
 
 
 def jwt_needed(func: callable) -> callable:
@@ -58,10 +58,10 @@ def jwt_verify_request(request: Request,
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
         if logger:
-            logger.debug(msg="Token was found")
+            logger.debug(msg="Bearer token was retrieved")
         errors: list[str] = []
         jwt_validate_token(errors=errors,
-                           nature=["A"],
+                           natures=["A"],
                            token=token)
         if errors:
             err_msg = "; ".join(errors)
@@ -85,7 +85,7 @@ def jwt_assert_account(account_id: str) -> bool:
     :param account_id: the account identification
     :return: *True* if access data exists for *account_id*, *False* otherwise
     """
-    return __jwt_data.access_data.get(account_id) is not None
+    return __jwt_registry.access_data.get(account_id) is not None
 
 
 def jwt_set_account(account_id: str,
@@ -126,17 +126,17 @@ def jwt_set_account(account_id: str,
         reference_url = reference_url[:pos]
 
     # register the JWT service
-    __jwt_data.add_account(account_id=account_id,
-                           reference_url=reference_url,
-                           claims=claims,
-                           access_max_age=access_max_age,
-                           refresh_max_age=refresh_max_age,
-                           grace_interval=grace_interval,
-                           token_audience=token_audience,
-                           token_nonce=token_nonce,
-                           request_timeout=request_timeout,
-                           remote_provider=remote_provider,
-                           logger=logger)
+    __jwt_registry.add_account(account_id=account_id,
+                               reference_url=reference_url,
+                               claims=claims,
+                               access_max_age=access_max_age,
+                               refresh_max_age=refresh_max_age,
+                               grace_interval=grace_interval,
+                               token_audience=token_audience,
+                               token_nonce=token_nonce,
+                               request_timeout=request_timeout,
+                               remote_provider=remote_provider,
+                               logger=logger)
 
 
 def jwt_remove_account(account_id: str,
@@ -151,26 +151,26 @@ def jwt_remove_account(account_id: str,
     if logger:
         logger.debug(msg=f"Remove access data for '{account_id}'")
 
-    return __jwt_data.remove_account(account_id=account_id,
-                                     logger=logger)
+    return __jwt_registry.remove_account(account_id=account_id,
+                                         logger=logger)
 
 
 def jwt_validate_token(errors: list[str] | None,
                        token: str,
-                       nature: list[str] = None,
+                       natures: list[str] = None,
                        account_id: str = None,
                        logger: Logger = None) -> dict[str, Any] | None:
     """
     Verify if *token* ia a valid JWT token.
 
     Raise an appropriate exception if validation failed.
-    if *nature* is provided, it is checked whether *token* has been locally issued and is of a appropriate nature.
-    A token issued locally has the header claim *kid* starting with "A" (for *Access*) or "R" (for *Refresh*),
-    followed by its id in the token database.
+    if *nature* is provided, verify whether *token* has been locally issued and is of a appropriate nature.
+    A token issued locally has the header claim *kid* starting with *A* (for *Access*) or *R* (for *Refresh*),
+    followed by its id in the token database, or as a single letter in the range *[B-Z]*, less *R*.
 
     :param errors: incidental error messages
     :param token: the token to be validated
-    :param nature: one of more prefixes identifying the nature of locally issued tokens
+    :param natures: one or more prefixes identifying the nature of locally issued tokens
     :param account_id: optionally, validate the token's account owner
     :param logger: optional logger
     :return: The token's claims (header and payload) if if is valid, *None* otherwise
@@ -188,9 +188,10 @@ def jwt_validate_token(errors: list[str] | None,
     op_errors: list[str] = []
 
     # retrieve token data from database
-    if nature and not (token_kid and token_kid[0:1] in nature):
+    if natures and not (token_kid and token_kid[0:1] in natures):
         op_errors.append("Invalid token")
-    elif token_kid:
+    elif token_kid and len(token_kid) > 1 and token_kid[0:1].isupper() and token[1:].isdigit():
+        # token was likely issued locally
         where_data: dict[str, Any] = {JWT_DB_COL_KID: int(token_kid[1:])}
         if account_id:
             where_data[JWT_DB_COL_ACCOUNT] = account_id
@@ -275,7 +276,7 @@ def jwt_revoke_token(errors: list[str] | None,
     op_errors: list[str] = []
     token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
                                                       token=refresh_token,
-                                                      nature=["A", "R"],
+                                                      natures=["A", "R"],
                                                       account_id=account_id,
                                                       logger=logger)
     if not op_errors:
@@ -298,16 +299,71 @@ def jwt_revoke_token(errors: list[str] | None,
     return result
 
 
-def jwt_get_tokens(errors: list[str] | None,
-                   account_id: str,
-                   account_claims: dict[str, Any] = None,
-                   refresh_token: str = None,
-                   logger: Logger = None) -> dict[str, Any]:
+def jwt_issue_token(errors: list[str] | None,
+                    account_id: str,
+                    nature: str,
+                    duration: int,
+                    grace_interval: int = None,
+                    claims: dict[str, Any] = None,
+                    logger: Logger = None) -> str:
     """
-    Issue or refresh, and return, the JWT token data associated with *account_id*.
+    Issue or refresh, and return, a JWT token associated with *account_id*, of the specified *nature*.
 
-    If *refresh_token* is provided, its claims are used on issuing the new tokens,
-    and claims in *account_claims*, if any, are ignored.
+    The parameter *nature* must be a single letter in the range *[B-Z]*, less *R*
+    (*A* is reserved for *access* tokens, and *R* for *refresh* tokens).
+    The parameter *duration* specifies the token's validity interval (at least 60 seconds).
+    These claims are ignored, if specified in *claims*: *iat*, *iss*, *exp*, *jti*, *nbf*, and *sub*.
+
+    :param errors: incidental error messages
+    :param account_id: the account identification
+    :param nature: the token's nature, must be a single letter in the range *[B-Z]*, less *R*
+    :param duration: the number of seconds for the token to remain valid (at least 60 seconds)
+    :param claims: optional token's claims
+    :param grace_interval: optional interval for the token to become active (in seconds)
+    :param logger: optional logger
+    :return: the JWT token data, or *None* if error
+    """
+    # inicialize the return variable
+    result: str | None = None
+
+    if logger:
+        logger.debug(msg=f"Issue a JWT token for '{account_id}'")
+    op_errors: list[str] = []
+
+    try:
+        result = __jwt_registry.issue_token(account_id=account_id,
+                                            nature=nature,
+                                            duration=duration,
+                                            claims=claims,
+                                            grace_interval=grace_interval,
+                                            logger=logger)
+        if logger:
+            logger.debug(msg=f"Token is '{result}'")
+    except Exception as e:
+        # token issuing failed
+        op_errors.append(str(e))
+
+    if op_errors:
+        if logger:
+            logger.error("; ".join(op_errors))
+        if isinstance(errors, list):
+            errors.extend(op_errors)
+
+    return result
+
+
+def jwt_issue_tokens(errors: list[str] | None,
+                     account_id: str,
+                     account_claims: dict[str, Any] = None,
+                     refresh_token: str = None,
+                     logger: Logger = None) -> dict[str, Any]:
+    """
+    Issue the JWT tokens associated with *account_id*, for access and refresh operations.
+
+    If *refresh_token* is provided, its claims are used on issuing the new tokens, and
+    claims in *account_claims*, if any, are ignored. Furthermore, these claims are ignored,
+    if provided in *account_claims*: *iat*, *iss*, *exp*, *jti*, *nbf*, and *sub*.
+    Other claims specified therein may supercede registered account-related claims.
 
     Structure of the return data:
     {
@@ -328,26 +384,29 @@ def jwt_get_tokens(errors: list[str] | None,
     result: dict[str, Any] | None = None
 
     if logger:
-        logger.debug(msg=f"Retrieve JWT token data for '{account_id}'")
+        logger.debug(msg=f"Return JWT token data for '{account_id}'")
     op_errors: list[str] = []
+
+    # verify whether this refresh token is legitimate
     if refresh_token:
-        # verify whether this refresh token is legitimate
         account_claims = (jwt_validate_token(errors=op_errors,
                                              token=refresh_token,
-                                             nature=["R"],
+                                             natures=["R"],
                                              account_id=account_id,
                                              logger=logger) or {}).get("payload")
         if account_claims:
-            account_claims.pop("iat", None)
-            account_claims.pop("jti", None)
-            account_claims.pop("iss", None)
             account_claims.pop("exp", None)
+            account_claims.pop("iat", None)
+            account_claims.pop("iss", None)
+            account_claims.pop("jti", None)
             account_claims.pop("nbt", None)
+            account_claims.pop("sub", None)
+
     if not op_errors:
         try:
-            result = __jwt_data.issue_tokens(account_id=account_id,
-                                             account_claims=account_claims,
-                                             logger=logger)
+            result = __jwt_registry.issue_tokens(account_id=account_id,
+                                                 account_claims=account_claims,
+                                                 logger=logger)
             if logger:
                 logger.debug(msg=f"Token data is '{result}'")
         except Exception as e:
