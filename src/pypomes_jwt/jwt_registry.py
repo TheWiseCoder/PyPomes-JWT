@@ -33,9 +33,7 @@ class JwtRegistry:
            "access-max-age": <int>,      # in seconds - defaults to JWT_ACCESS_MAX_AGE
            "refresh-max-age": <int>,     # in seconds - defaults to JWT_REFRESH_MAX_AGE
            "grace-interval": <int>       # time to wait for token to be valid, in seconds
-           # optional
-           "token-audience": <string>    # the audience the token is intended for
-           "token_nonce": <string>       # value used to associate a client session with a token
+           "request-timeout": <int>      # timeout for the requests to the reference URL (in seconds)
            "claims": {
              "valid-from": <string>      # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
              "valid-until": <string>     # token's finish (<YYYY-MM-DDThh:mm:ss+00:00>)
@@ -45,7 +43,7 @@ class JwtRegistry:
              "gender": <string>,         # subject's gender
              "name": <string>,           # subject's name
              "roles": <List[str]>,       # subject roles
-             "nonce": <string>,          # value used to associate a Client session with a token
+             "nonce": <string>,          # used to associate a Client session with a token
              ...
            }
          },
@@ -78,7 +76,7 @@ class JwtRegistry:
        "gender": <string>       # subject's gender
        "name": <string>         # subject's name
        "roles": <List[str]>     # subject roles
-       "nonce": <string>        # value used to associate a client session with a token
+       "nonce": <string>        # used to associate a client session with a token
 
     The token header has these items:
       "alg": <string>           # the algorithm used to sign the token (one of *HS256*, *HS51*', *RSA256*, *RSA512*)
@@ -101,11 +99,9 @@ class JwtRegistry:
                     claims: dict[str, Any],
                     access_max_age: int,
                     refresh_max_age: int,
-                    grace_interval: int,
-                    token_audience: str,
-                    token_nonce: str,
-                    request_timeout: int,
-                    remote_provider: bool,
+                    grace_interval: int | None,
+                    request_timeout: int | None,
+                    remote_provider: bool | None,
                     logger: Logger = None) -> None:
         """
         Add to storage the parameters needed to produce and validate JWT tokens for *account_id*.
@@ -121,9 +117,7 @@ class JwtRegistry:
         :param access_max_age: access token duration, in seconds
         :param refresh_max_age: refresh token duration, in seconds
         :param grace_interval: time to wait for token to be valid, in seconds
-        :param token_audience: the audience the token is intended for
-        :param token_nonce: optional value used to associate a client session with a token
-        :param request_timeout: timeout for the requests to the reference URL
+        :param request_timeout: timeout for the requests to the reference URL (in seconds)
         :param remote_provider: whether the JWT provider is a remote server
         :param logger: optional logger
         """
@@ -135,8 +129,6 @@ class JwtRegistry:
                     "access-max-age": access_max_age,
                     "refresh-max-age": refresh_max_age,
                     "grace-interval": grace_interval,
-                    "token-audience": token_audience,
-                    "token-nonce": token_nonce,
                     "request-timeout": request_timeout,
                     "remote-provider": remote_provider,
                     "claims": claims or {}
@@ -246,7 +238,7 @@ class JwtRegistry:
                      account_claims: dict[str, Any] = None,
                      logger: Logger = None) -> dict[str, Any]:
         """
-        Issue and return the JWT access and refresh tokens for *account_id*.
+        Issue and return a JWT token pair associated with *account_id*.
 
         These claims are ignored, if specified in *account_claims*: *iat*, *iss*, *exp*, *jti*, *nbf*, and *sub*.
         Other claims specified therein may supercede registered account-related claims.
