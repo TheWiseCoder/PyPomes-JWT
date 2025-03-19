@@ -161,69 +161,76 @@ def jwt_validate_token(errors: list[str] | None,
     """
     # initialize the return variable
     result: dict[str, Any] | None = None
+
     if logger:
         logger.debug(msg="Validate JWT token")
-
-    # extract needed data from token header
-    token_header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
-    token_kid: str = token_header.get("kid")
-    token_alg: str | None = None
-    token_decoder: bytes | None = None
     op_errors: list[str] = []
 
-    # retrieve token data from database
-    if nature and not (token_kid and token_kid[0:1] == nature):
-        op_errors.append("Invalid token")
-    elif token_kid and len(token_kid) > 1 and \
-            token_kid[0:1] in ["A", "R"] and token[1:].isdigit():
-        # token was likely issued locally
-        where_data: dict[str, Any] = {JWT_DB_COL_KID: int(token_kid[1:])}
-        if account_id:
-            where_data[JWT_DB_COL_ACCOUNT] = account_id
-        recs: list[tuple[str]] = db_select(errors=op_errors,
-                                           sel_stmt=f"SELECT {JWT_DB_COL_ALGORITHM}, {JWT_DB_COL_DECODER} "
-                                                    f"FROM {JWT_DB_TABLE}",
-                                           where_data=where_data,
-                                           logger=logger)
-        if recs:
-            token_alg = recs[0][0]
-            token_decoder = urlsafe_b64decode(recs[0][1])
-        else:
+    # extract needed data from token header
+    token_header: dict[str, Any] | None = None
+    try:
+        token_header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
+    except Exception as e:
+        op_errors.append(str(e))
+
+    if not op_errors:
+        token_kid: str = token_header.get("kid")
+        token_alg: str | None = None
+        token_decoder: bytes | None = None
+
+        # retrieve token data from database
+        if nature and not (token_kid and token_kid[0:1] == nature):
             op_errors.append("Invalid token")
-    else:
-        token_alg = JWT_DEFAULT_ALGORITHM
-        token_decoder = JWT_DECODING_KEY
+        elif token_kid and len(token_kid) > 1 and \
+                token_kid[0:1] in ["A", "R"] and token_kid[1:].isdigit():
+            # token was likely issued locally
+            where_data: dict[str, Any] = {JWT_DB_COL_KID: int(token_kid[1:])}
+            if account_id:
+                where_data[JWT_DB_COL_ACCOUNT] = account_id
+            recs: list[tuple[str]] = db_select(errors=op_errors,
+                                               sel_stmt=f"SELECT {JWT_DB_COL_ALGORITHM}, {JWT_DB_COL_DECODER} "
+                                                        f"FROM {JWT_DB_TABLE}",
+                                               where_data=where_data,
+                                               logger=logger)
+            if recs:
+                token_alg = recs[0][0]
+                token_decoder = urlsafe_b64decode(recs[0][1])
+            else:
+                op_errors.append("Invalid token")
+        else:
+            token_alg = JWT_DEFAULT_ALGORITHM
+            token_decoder = JWT_DECODING_KEY
 
         # validate the token
-    if not op_errors:
-        try:
-            # raises:
-            #   InvalidTokenError: token is invalid
-            #   InvalidKeyError: authentication key is not in the proper format
-            #   ExpiredSignatureError: token and refresh period have expired
-            #   InvalidSignatureError: signature does not match the one provided as part of the token
-            #   ImmatureSignatureError: 'nbf' or 'iat' claim represents a timestamp in the future
-            #   InvalidAlgorithmError: the specified algorithm is not recognized
-            #   InvalidIssuedAtError: 'iat' claim is non-numeric
-            #   MissingRequiredClaimError: a required claim is not contained in the claimset
-            payload: dict[str, Any] = jwt.decode(jwt=token,
-                                                 options={
-                                                     "verify_signature": True,
-                                                     "verify_exp": True,
-                                                     "verify_nbf": True
-                                                 },
-                                                 key=token_decoder,
-                                                 require=["iat", "iss", "exp", "sub"],
-                                                 algorithms=token_alg)
-            if account_id and payload.get("sub") != account_id:
-                op_errors.append("Token does not belong to account")
-            else:
-                result = {
-                    "header": token_header,
-                    "payload": payload
-                }
-        except Exception as e:
-            op_errors.append(str(e))
+        if not op_errors:
+            try:
+                # raises:
+                #   InvalidTokenError: token is invalid
+                #   InvalidKeyError: authentication key is not in the proper format
+                #   ExpiredSignatureError: token and refresh period have expired
+                #   InvalidSignatureError: signature does not match the one provided as part of the token
+                #   ImmatureSignatureError: 'nbf' or 'iat' claim represents a timestamp in the future
+                #   InvalidAlgorithmError: the specified algorithm is not recognized
+                #   InvalidIssuedAtError: 'iat' claim is non-numeric
+                #   MissingRequiredClaimError: a required claim is not contained in the claimset
+                payload: dict[str, Any] = jwt.decode(jwt=token,
+                                                     options={
+                                                         "verify_signature": True,
+                                                         "verify_exp": True,
+                                                         "verify_nbf": True
+                                                     },
+                                                     key=token_decoder,
+                                                     require=["iat", "iss", "exp", "sub"],
+                                                     algorithms=token_alg)
+                if account_id and payload.get("sub") != account_id:
+                    op_errors.append("Token does not belong to account")
+                else:
+                    result = {
+                        "header": token_header,
+                        "payload": payload
+                    }
+            except Exception as e:
+                op_errors.append(str(e))
 
     if op_errors:
         err_msg: str = "; ".join(op_errors)
@@ -256,7 +263,7 @@ def jwt_revoke_token(errors: list[str] | None,
     result: bool = False
 
     if logger:
-        logger.debug(msg=f"Revoking refresh token of '{account_id}'")
+        logger.debug(msg=f"Revoking token of account '{account_id}'")
 
     op_errors: list[str] = []
     token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
@@ -351,10 +358,10 @@ def jwt_issue_tokens(errors: list[str] | None,
 
     Structure of the return data:
     {
-      "access_token": <jwt-token>,
-      "created_in": <timestamp>,
-      "expires_in": <seconds-to-expiration>,
-      "refresh_token": <jwt-token>
+      "access-token": <jwt-token>,
+      "created-in": <timestamp>,
+      "expires-in": <seconds-to-expiration>,
+      "refresh-token": <jwt-token>
     }
 
     :param errors: incidental error messages
@@ -400,10 +407,10 @@ def jwt_refresh_tokens(errors: list[str] | None,
 
     Structure of the return data:
     {
-      "access_token": <jwt-token>,
-      "created_in": <timestamp>,
-      "expires_in": <seconds-to-expiration>,
-      "refresh_token": <jwt-token>
+      "access-token": <jwt-token>,
+      "created-in": <timestamp>,
+      "expires-in": <seconds-to-expiration>,
+      "refresh-token": <jwt-token>
     }
 
     :param errors: incidental error messages

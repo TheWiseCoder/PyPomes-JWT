@@ -232,10 +232,10 @@ class JwtRegistry:
 
         Structure of the return data:
         {
-          "access_token": <jwt-token>,
-          "created_in": <timestamp>,
-          "expires_in": <seconds-to-expiration>,
-          "refresh_token": <jwt-token>
+          "access-token": <jwt-token>,
+          "created-in": <timestamp>,
+          "expires-in": <seconds-to-expiration>,
+          "refresh-token": <jwt-token>
         }
 
         :param account_id: the account identification
@@ -312,10 +312,10 @@ class JwtRegistry:
                                            headers={"kid": f"A{token_id}"})
             # return the token data
             return {
-                "access_token": access_token,
-                "created_in": current_claims.get("iat"),
-                "expires_in": current_claims.get("exp"),
-                "refresh_token": refresh_token
+                "access-token": access_token,
+                "created-in": current_claims.get("iat"),
+                "expires-in": current_claims.get("exp"),
+                "refresh-token": refresh_token
             }
 
     def __get_account_data(self,
@@ -379,12 +379,13 @@ def _jwt_persist_token(errors: list[str],
     if logger:
         logger.debug(msg=f"Read {len(recs)} token from storage for account '{account_id}'")
     # remove the expired tokens
-    oldest: int = sys.maxsize
-    surplus: int | None = None
+    just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+    oldest_ts: int = sys.maxsize
+    oldest_id: int | None = None
     expired: list[int] = []
     for rec in recs:
         token: str = rec[1]
-        token_kid: int = rec[0]
+        token_id: int = rec[0]
         token_claims: dict[str, Any] = jwt_get_claims(errors=errors,
                                                       token=token,
                                                       logger=logger)
@@ -393,14 +394,14 @@ def _jwt_persist_token(errors: list[str],
 
         # find expired tokens
         exp: int = token_claims["payload"].get("exp", sys.maxsize)
-        if exp < datetime.now(tz=timezone.utc).timestamp():
-            expired.append(token_kid)
+        if exp < just_now:
+            expired.append(token_id)
 
         # find oldest token
         iat: int = token_claims["payload"].get("iat", sys.maxsize)
-        if iat < oldest:
-            oldest = exp
-            surplus = token_kid
+        if iat < oldest_ts:
+            oldest_ts = exp
+            oldest_id = token_id
 
     # remove expired tokens from persistence
     if expired:
@@ -419,7 +420,7 @@ def _jwt_persist_token(errors: list[str],
         # delete the oldest token to make way for the new one
         db_delete(errors=errors,
                   delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
-                  where_data={JWT_DB_COL_KID: surplus},
+                  where_data={JWT_DB_COL_KID: oldest_id},
                   connection=db_conn,
                   logger=logger)
         if errors:
