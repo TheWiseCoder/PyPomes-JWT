@@ -5,7 +5,9 @@ from base64 import urlsafe_b64encode
 from datetime import datetime, timezone
 from logging import Logger
 from pypomes_core import str_random
-from pypomes_db import db_connect, db_commit, db_update, db_delete
+from pypomes_db import (
+    db_connect, db_commit, db_select, db_insert, db_update, db_delete
+)
 from threading import Lock
 from typing import Any
 
@@ -275,12 +277,11 @@ class JwtRegistry:
                                             key=JWT_ENCODING_KEY,
                                             algorithm=JWT_DEFAULT_ALGORITHM,
                                             headers={"kid": "R0"})
-            # obtain a DB connection (may raise an exception)
+            # obtain a DB connection
             db_conn: Any = db_connect(errors=errors,
                                       logger=logger)
             # persist the candidate token (may raise an exception)
-            token_id: int = _jwt_persist_token(errors=errors,
-                                               account_id=account_id,
+            token_id: int = _jwt_persist_token(account_id=account_id,
                                                jwt_token=refresh_token,
                                                db_conn=db_conn,
                                                logger=logger)
@@ -297,9 +298,10 @@ class JwtRegistry:
                       connection=db_conn,
                       logger=logger)
             # commit the transaction
-            db_commit(errors=errors,
-                      connection=db_conn,
-                      logger=logger)
+            if not errors:
+                db_commit(errors=errors,
+                          connection=db_conn,
+                          logger=logger)
             if errors:
                 raise RuntimeError("; ".join(errors))
 
@@ -339,8 +341,7 @@ class JwtRegistry:
         return result
 
 
-def _jwt_persist_token(errors: list[str],
-                       account_id: str,
+def _jwt_persist_token(account_id: str,
                        jwt_token: str,
                        db_conn: Any = None,
                        logger: Logger = None) -> int:
@@ -354,7 +355,6 @@ def _jwt_persist_token(errors: list[str],
 
     If *db_conn* is provided, then all DB operations will be carried out in the scope of a single transaction.
 
-    :param errors: incidental errors
     :param account_id: the account identification
     :param jwt_token: the JWT token to persist
     :param db_conn: the database connection to use
@@ -362,17 +362,19 @@ def _jwt_persist_token(errors: list[str],
     :return: the storage id of the inserted token
     :raises RuntimeError: error accessing the token database
     """
-    from pypomes_db import db_select, db_insert, db_delete
     from .jwt_pomes import jwt_get_claims
 
     # retrieve the account's tokens
+    errors: list[str] = []
     # noinspection PyTypeChecker
     recs: list[tuple[int, str, str, str]] = \
         db_select(errors=errors,
                   sel_stmt=f"SELECT {JWT_DB_COL_KID}, {JWT_DB_COL_TOKEN} "
                            f"FROM {JWT_DB_TABLE}",
                   where_data={JWT_DB_COL_ACCOUNT: account_id},
-                  connection=db_conn)
+                  connection=db_conn,
+                  committable=False,
+                  logger=logger)
     if errors:
         raise RuntimeError("; ".join(errors))
 
@@ -409,6 +411,7 @@ def _jwt_persist_token(errors: list[str],
                   delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
                   where_data={JWT_DB_COL_KID: expired},
                   connection=db_conn,
+                  committable=False,
                   logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -422,6 +425,7 @@ def _jwt_persist_token(errors: list[str],
                   delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
                   where_data={JWT_DB_COL_KID: oldest_id},
                   connection=db_conn,
+                  committable=False,
                   logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -436,6 +440,7 @@ def _jwt_persist_token(errors: list[str],
                            JWT_DB_COL_ALGORITHM: JWT_DEFAULT_ALGORITHM,
                            JWT_DB_COL_DECODER: urlsafe_b64encode(JWT_DECODING_KEY).decode()},
               connection=db_conn,
+              committable=False,
               logger=logger)
     if errors:
         raise RuntimeError("; ".join(errors))
@@ -446,6 +451,7 @@ def _jwt_persist_token(errors: list[str],
                                                  f"FROM {JWT_DB_TABLE}",
                                         where_data={JWT_DB_COL_TOKEN: jwt_token},
                                         connection=db_conn,
+                                        committable=False,
                                         logger=logger)
     if errors:
         raise RuntimeError("; ".join(errors))

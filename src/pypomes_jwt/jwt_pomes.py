@@ -1,7 +1,9 @@
 import jwt
+import sys
 from base64 import urlsafe_b64decode
 from flask import Request, Response, request
 from logging import Logger
+from pypomes_core import exc_format
 from pypomes_db import db_select, db_delete
 from typing import Any
 
@@ -34,45 +36,33 @@ def jwt_needed(func: callable) -> callable:
     return wrapper
 
 
-def jwt_verify_request(request: Request,
-                       logger: Logger = None) -> Response:
+def jwt_verify_request(request: Request) -> Response:
     """
-    Verify wheher the HTTP *request* has the proper authorization, as per the JWT standard.
+    Verify whether the HTTP *request* has the proper authorization, as per the JWT standard.
 
     :param request: the request to be verified
-    :param logger: optional logger
     :return: *None* if the request is valid, otherwise a *Response* object reporting the error
     """
     # initialize the return variable
     result: Response | None = None
 
-    if logger:
-        logger.debug(msg="Validate a JWT token")
-    err_msg: str | None = None
-
     # retrieve the authorization from the request header
     auth_header: str = request.headers.get("Authorization")
 
     # was a 'Bearer' authorization obtained ?
+    bad_token: bool = False
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
-        if logger:
-            logger.debug(msg="Bearer token was retrieved")
         errors: list[str] = []
         jwt_validate_token(errors=errors,
                            nature="A",
                            token=token)
         if errors:
-            err_msg = "; ".join(errors)
-    else:
-        # no 'Bearer' found, report the error
-        err_msg = "Request header has no 'Bearer' data"
+            bad_token = True
 
-    # log the error and deny the authorization
-    if err_msg:
-        if logger:
-            logger.error(msg=err_msg)
+    # deny the authorization
+    if bad_token:
         result = Response(response="Authorization failed",
                           status=401)
     return result
@@ -152,6 +142,8 @@ def jwt_validate_token(errors: list[str] | None,
     If the *kid* claim contains such an id, then the cryptographic key needed for validation
     will be obtained from the token database. Otherwise, the current decoding key is used.
 
+    On success, return the token's claims (header and payload), as documented in *jwt_get_claims()*
+
     :param errors: incidental error messages
     :param token: the token to be validated
     :param nature: prefix identifying the nature of locally issued tokens
@@ -171,7 +163,11 @@ def jwt_validate_token(errors: list[str] | None,
     try:
         token_header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
     except Exception as e:
-        op_errors.append(str(e))
+        exc_err: str = exc_format(exc=e,
+                                  exc_info=sys.exc_info())
+        if logger:
+            logger.error(msg=f"Error retrieving the token's header: {exc_err}")
+        op_errors.append(exc_err)
 
     if not op_errors:
         token_kid: str = token_header.get("kid")
@@ -195,7 +191,12 @@ def jwt_validate_token(errors: list[str] | None,
             if recs:
                 token_alg = recs[0][0]
                 token_decoder = urlsafe_b64decode(recs[0][1])
+            elif op_errors:
+                if logger:
+                    logger.error(msg=f"Error retrieving the token's decoder: {'; '.join(op_errors)}")
             else:
+                if logger:
+                    logger.error(msg="Token not in the database")
                 op_errors.append("Invalid token")
         else:
             token_alg = JWT_DEFAULT_ALGORITHM
@@ -230,12 +231,13 @@ def jwt_validate_token(errors: list[str] | None,
                         "payload": payload
                     }
             except Exception as e:
-                op_errors.append(str(e))
+                exc_err: str = exc_format(exc=e,
+                                          exc_info=sys.exc_info())
+                if logger:
+                    logger.error(msg=f"Error decoding the token: {exc_err}")
+                op_errors.append(exc_err)
 
     if op_errors:
-        err_msg: str = "; ".join(op_errors)
-        if logger:
-            logger.error(msg=err_msg)
         if isinstance(errors, list):
             errors.extend(op_errors)
     elif logger:
@@ -335,13 +337,14 @@ def jwt_issue_token(errors: list[str] | None,
             logger.debug(msg=f"Token is '{result}'")
     except Exception as e:
         # token issuing failed
-        op_errors.append(str(e))
-
-    if op_errors:
+        exc_err: str = exc_format(exc=e,
+                                  exc_info=sys.exc_info())
         if logger:
-            logger.error("; ".join(op_errors))
-        if isinstance(errors, list):
-            errors.extend(op_errors)
+            logger.error(msg=f"Error issuing the token: {exc_err}")
+        op_errors.append(exc_err)
+
+    if op_errors and isinstance(errors, list):
+        errors.extend(op_errors)
 
     return result
 
@@ -385,7 +388,11 @@ def jwt_issue_tokens(errors: list[str] | None,
             logger.debug(msg=f"Token data is '{result}'")
     except Exception as e:
         # token issuing failed
-        op_errors.append(str(e))
+        exc_err: str = exc_format(exc=e,
+                                  exc_info=sys.exc_info())
+        if logger:
+            logger.error(msg=f"Error issuing the token pair: {exc_err}")
+        op_errors.append(exc_err)
 
     if op_errors:
         if logger:
@@ -429,11 +436,11 @@ def jwt_refresh_tokens(errors: list[str] | None,
     # assert the refresh token
     if refresh_token:
         # is the refresh token valid ?
-        account_claims = jwt_validate_token(errors=op_errors,
-                                            token=refresh_token,
-                                            nature="R",
-                                            account_id=account_id,
-                                            logger=logger)
+        account_claims = (jwt_validate_token(errors=op_errors,
+                                             token=refresh_token,
+                                             nature="R",
+                                             account_id=account_id,
+                                             logger=logger) or {}).get("payload")
         # if it is, revoke current refresh token
         if account_claims and jwt_revoke_token(errors=op_errors,
                                                account_id=account_id,
@@ -512,9 +519,11 @@ def jwt_get_claims(errors: list[str] | None,
             "payload": payload
         }
     except Exception as e:
+        exc_err: str = exc_format(exc=e,
+                                  exc_info=sys.exc_info())
         if logger:
-            logger.error(msg=str(e))
+            logger.error(msg=f"Error retrieving the token's claimsn: {exc_err}")
         if isinstance(errors, list):
-            errors.append(str(e))
+            errors.append(exc_err)
 
     return result
