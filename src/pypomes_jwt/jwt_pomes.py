@@ -52,16 +52,15 @@ def jwt_verify_request(request: Request) -> Response:
     auth_header: str = request.headers.get("Authorization")
 
     # was a 'Bearer' authorization obtained ?
-    bad_token: bool = False
+    bad_token: bool = True
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
         errors: list[str] = []
-        jwt_validate_token(errors=errors,
-                           nature="A",
-                           token=token)
-        if errors:
-            bad_token = True
+        if jwt_validate_token(errors=errors,
+                              nature="A",
+                              token=token):
+            bad_token = False
 
     # deny the authorization
     if bad_token:
@@ -480,7 +479,7 @@ def jwt_refresh_tokens(errors: list[str] | None,
                             logger.error(msg=f"Error refreshing the token pair: {exc_err}")
                         op_errors.append(exc_err)
 
-                # conclude the transaction
+                # wrap-up the transaction
                 if op_errors:
                     db_rollback(errors=op_errors,
                                 connection=db_conn,

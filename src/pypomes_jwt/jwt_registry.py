@@ -308,7 +308,7 @@ class JwtRegistry:
                           committable=False,
                           logger=logger)
 
-                # conclude the transaction
+                # wrap-up the transaction
                 if not db_conn:
                     if errors:
                         db_rollback(errors=errors,
@@ -362,7 +362,7 @@ def _jwt_persist_token(account_id: str,
                        db_conn: Any,
                        logger: Logger = None) -> int:
     """
-    Persist the given token, making sure that the account limit is adhered to.
+    Persist the given token, making sure that the account limit is complied with.
 
     The tokens in storage, associated with *account_id*, are examined for their expiration timestamp.
     If a token's expiration timestamp is in the past, it is removed from storage. If the maximum number
@@ -464,12 +464,12 @@ def _jwt_persist_token(account_id: str,
     if errors:
         raise RuntimeError("; ".join(errors))
 
-    # obtain the token's storage id
-    # HAZARD: JWT_DB_COL_TOKEN's type might prevent it for being used in a WHERE clause
+    # obtain and return the token's storage id
+    # HAZARD: JWT_DB_COL_TOKEN's column type might prevent it for being used in a WHERE clause
     where_clause: str | None = None
     if existing_ids:
-        where_clause = f"{JWT_DB_COL_KID} NOT IN ({existing_ids})"
-        where_clause = where_clause.replace("[", "").replace("]", "")
+        where_clause = f"{JWT_DB_COL_KID} NOT IN {existing_ids}"
+        where_clause = where_clause.replace("[", "(", 1).replace("]", ")", 1)
     reply: list[tuple[int]] = db_select(errors=errors,
                                         sel_stmt=f"SELECT {JWT_DB_COL_KID} "
                                                  f"FROM {JWT_DB_TABLE}",
