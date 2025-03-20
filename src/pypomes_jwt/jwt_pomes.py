@@ -4,7 +4,9 @@ from base64 import urlsafe_b64decode
 from flask import Request, Response, request
 from logging import Logger
 from pypomes_core import exc_format
-from pypomes_db import db_select, db_delete
+from pypomes_db import (
+    db_connect, db_commit, db_rollback, db_select, db_delete
+)
 from typing import Any
 
 from . import (
@@ -436,21 +438,57 @@ def jwt_refresh_tokens(errors: list[str] | None,
     # assert the refresh token
     if refresh_token:
         # is the refresh token valid ?
-        account_claims = (jwt_validate_token(errors=op_errors,
-                                             token=refresh_token,
-                                             nature="R",
-                                             account_id=account_id,
-                                             logger=logger) or {}).get("payload")
-        # if it is, revoke current refresh token
-        if account_claims and jwt_revoke_token(errors=op_errors,
-                                               account_id=account_id,
-                                               token=refresh_token,
-                                               logger=logger):
-            # issue tokens
-            result = jwt_issue_tokens(errors=op_errors,
-                                      account_id=account_id,
-                                      account_claims=account_claims,
+        token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
+                                                          token=refresh_token,
+                                                          nature="R",
+                                                          account_id=account_id,
+                                                          logger=logger)
+        if token_claims:
+            # yes, proceed
+            token_kid: str = token_claims["header"].get("kid")
+
+            # start the database transaction
+            db_conn: Any = db_connect(errors=op_errors,
+                                      autocommit=False,
                                       logger=logger)
+            if db_conn:
+                # delete current refresh token
+                db_delete(errors=op_errors,
+                          delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
+                          where_data={
+                              JWT_DB_COL_KID: int(token_kid[1:]),
+                              JWT_DB_COL_ACCOUNT: account_id
+                          },
+                          connection=db_conn,
+                          committable=False,
+                          logger=logger)
+
+                # issue the token pair
+                if not op_errors:
+                    try:
+                        result = __jwt_registry.issue_tokens(account_id=account_id,
+                                                             account_claims=token_claims.get("payload"),
+                                                             db_conn=db_conn,
+                                                             logger=logger)
+                        if logger:
+                            logger.debug(msg=f"Token pair was refreshed for account '{account_id}'")
+                    except Exception as e:
+                        # token issuing failed
+                        exc_err: str = exc_format(exc=e,
+                                                  exc_info=sys.exc_info())
+                        if logger:
+                            logger.error(msg=f"Error refreshing the token pair: {exc_err}")
+                        op_errors.append(exc_err)
+
+                # conclude the transaction
+                if op_errors:
+                    db_rollback(errors=op_errors,
+                                connection=db_conn,
+                                logger=logger)
+                else:
+                    db_commit(errors=op_errors,
+                              connection=db_conn,
+                              logger=logger)
     else:
         # refresh token not found
         op_errors.append("Refresh token was not provided")
@@ -470,7 +508,8 @@ def jwt_get_claims(errors: list[str] | None,
     """
     Retrieve and return the claims set of a JWT *token*.
 
-    Any valid JWT token may be provided in *token*, as this operation is not restricted to locally issued tokens.
+    Any well-constructed JWT token may be provided in *token*, as this operation is not restricted to
+    locally issued tokens. Note that neither the token's signature nor its expiration is verified.
 
     Structure of the returned data, for locally issued tokens:
       {

@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from logging import Logger
 from pypomes_core import str_random
 from pypomes_db import (
-    db_connect, db_commit, db_select, db_insert, db_update, db_delete
+    db_connect, db_commit, db_rollback,
+    db_select, db_insert, db_update, db_delete
 )
 from threading import Lock
 from typing import Any
@@ -225,12 +226,16 @@ class JwtRegistry:
     def issue_tokens(self,
                      account_id: str,
                      account_claims: dict[str, Any] = None,
+                     db_conn: Any = None,
                      logger: Logger = None) -> dict[str, Any]:
         """
         Issue and return a JWT token pair associated with *account_id*.
 
         These claims are ignored, if specified in *account_claims*: *iat*, *exp*, *jti*, *nbf*, and *sub*.
         Other claims specified therein may supercede registered account-related claims.
+
+        If provided, *db_conn* indicates that this operation is part of a larger database transaction.
+        Otherwise, the database transaction's scope is limited to this operation.
 
         Structure of the return data:
         {
@@ -242,6 +247,7 @@ class JwtRegistry:
 
         :param account_id: the account identification
         :param account_claims: if provided, may supercede registered account-related claims
+        :param db_conn: if provided, indicates that this operation is part of a larger database transaction
         :param logger: optional logger
         :return: the JWT token data
         :raises RuntimeError: invalid account id, or error accessing the token database
@@ -277,31 +283,41 @@ class JwtRegistry:
                                             key=JWT_ENCODING_KEY,
                                             algorithm=JWT_DEFAULT_ALGORITHM,
                                             headers={"kid": "R0"})
-            # obtain a DB connection
-            db_conn: Any = db_connect(errors=errors,
-                                      logger=logger)
-            # persist the candidate token (may raise an exception)
-            token_id: int = _jwt_persist_token(account_id=account_id,
-                                               jwt_token=refresh_token,
-                                               db_conn=db_conn,
-                                               logger=logger)
-            # issue the definitive refresh token
-            refresh_token = jwt.encode(payload=current_claims,
-                                       key=JWT_ENCODING_KEY,
-                                       algorithm=JWT_DEFAULT_ALGORITHM,
-                                       headers={"kid": f"R{token_id}"})
-            # persist it
-            db_update(errors=errors,
-                      update_stmt=f"UPDATE {JWT_DB_TABLE}",
-                      update_data={JWT_DB_COL_TOKEN: refresh_token},
-                      where_data={JWT_DB_COL_KID: token_id},
-                      connection=db_conn,
-                      logger=logger)
-            # commit the transaction
-            if not errors:
-                db_commit(errors=errors,
-                          connection=db_conn,
+
+            # make sure to have a database connection
+            curr_conn: Any = db_conn or db_connect(errors=errors,
+                                                   autocommit=False,
+                                                   logger=logger)
+            if curr_conn:
+                # persist the candidate token (may raise an exception)
+                token_id: int = _jwt_persist_token(account_id=account_id,
+                                                   jwt_token=refresh_token,
+                                                   db_conn=curr_conn,
+                                                   logger=logger)
+                # issue the definitive refresh token
+                refresh_token = jwt.encode(payload=current_claims,
+                                           key=JWT_ENCODING_KEY,
+                                           algorithm=JWT_DEFAULT_ALGORITHM,
+                                           headers={"kid": f"R{token_id}"})
+                # persist it
+                db_update(errors=errors,
+                          update_stmt=f"UPDATE {JWT_DB_TABLE}",
+                          update_data={JWT_DB_COL_TOKEN: refresh_token},
+                          where_data={JWT_DB_COL_KID: token_id},
+                          connection=curr_conn,
+                          committable=False,
                           logger=logger)
+
+                # conclude the transaction
+                if not db_conn:
+                    if errors:
+                        db_rollback(errors=errors,
+                                    connection=curr_conn,
+                                    logger=logger)
+                    else:
+                        db_commit(errors=errors,
+                                  connection=curr_conn,
+                                  logger=logger)
             if errors:
                 raise RuntimeError("; ".join(errors))
 
@@ -343,7 +359,7 @@ class JwtRegistry:
 
 def _jwt_persist_token(account_id: str,
                        jwt_token: str,
-                       db_conn: Any = None,
+                       db_conn: Any,
                        logger: Logger = None) -> int:
     """
     Persist the given token, making sure that the account limit is adhered to.
@@ -352,8 +368,7 @@ def _jwt_persist_token(account_id: str,
     If a token's expiration timestamp is in the past, it is removed from storage. If the maximum number
     of active tokens for *account_id* has been reached, the oldest active one is alse removed,
     to make room for the new *jwt_token*.
-
-    If *db_conn* is provided, then all DB operations will be carried out in the scope of a single transaction.
+    The provided database connection *db_conn* indicates that this operation is part of a larger transaction.
 
     :param account_id: the account identification
     :param jwt_token: the JWT token to persist
@@ -384,26 +399,30 @@ def _jwt_persist_token(account_id: str,
     just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
     oldest_ts: int = sys.maxsize
     oldest_id: int | None = None
+    existing_ids: list[int] = []
     expired: list[int] = []
     for rec in recs:
         token: str = rec[1]
         token_id: int = rec[0]
-        token_claims: dict[str, Any] = jwt_get_claims(errors=errors,
-                                                      token=token,
-                                                      logger=logger)
+        token_payload: dict[str, Any] = (jwt_get_claims(errors=errors,
+                                                        token=token,
+                                                        logger=logger) or {}).get("payload")
         if errors:
             raise RuntimeError("; ".join(errors))
 
         # find expired tokens
-        exp: int = token_claims["payload"].get("exp", sys.maxsize)
+        exp: int = token_payload.get("exp", sys.maxsize)
         if exp < just_now:
             expired.append(token_id)
 
         # find oldest token
-        iat: int = token_claims["payload"].get("iat", sys.maxsize)
+        iat: int = token_payload.get("iat", sys.maxsize)
         if iat < oldest_ts:
-            oldest_ts = exp
+            oldest_ts = iat
             oldest_id = token_id
+
+        # save token id
+        existing_ids.append(token_id)
 
     # remove expired tokens from persistence
     if expired:
@@ -446,10 +465,17 @@ def _jwt_persist_token(account_id: str,
         raise RuntimeError("; ".join(errors))
 
     # obtain the token's storage id
+    # HAZARD: JWT_DB_COL_TOKEN's type might prevent it for being used in a WHERE clause
+    where_clause: str | None = None
+    if existing_ids:
+        where_clause = f"{JWT_DB_COL_KID} NOT IN ({existing_ids})"
+        where_clause = where_clause.replace("[", "").replace("]", "")
     reply: list[tuple[int]] = db_select(errors=errors,
                                         sel_stmt=f"SELECT {JWT_DB_COL_KID} "
                                                  f"FROM {JWT_DB_TABLE}",
-                                        where_data={JWT_DB_COL_TOKEN: jwt_token},
+                                        where_clause=where_clause,
+                                        where_data={JWT_DB_COL_ACCOUNT: account_id},
+                                        require_count=1,
                                         connection=db_conn,
                                         committable=False,
                                         logger=logger)
