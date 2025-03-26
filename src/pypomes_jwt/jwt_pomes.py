@@ -9,15 +9,12 @@ from pypomes_db import (
 )
 from typing import Any
 
-from . import (
-    JWT_ACCESS_MAX_AGE, JWT_REFRESH_MAX_AGE,
-    JWT_DEFAULT_ALGORITHM, JWT_DECODING_KEY,
-    JWT_DB_TABLE, JWT_DB_COL_KID,
-    JWT_DB_COL_ACCOUNT, JWT_DB_COL_ALGORITHM, JWT_DB_COL_DECODER
+from .jwt_constants import (
+    JwtParam, JwtDbParam, _JWT_CONFIG, _JWT_DATABASE
 )
 from .jwt_registry import JwtRegistry
 
-# the JWT data object
+# the JWT registry
 __jwt_registry: JwtRegistry = JwtRegistry()
 
 
@@ -42,8 +39,8 @@ def jwt_verify_request(request: Request) -> Response:
     """
     Verify whether the HTTP *request* has the proper authorization, as per the JWT standard.
 
-    :param request: the request to be verified
-    :return: *None* if the request is valid, otherwise a *Response* object reporting the error
+    :param request: the *request* to be verified
+    :return: *None* if the *request* is valid, otherwise a *Response* reporting the error
     """
     # initialize the return variable
     result: Response | None = None
@@ -56,8 +53,7 @@ def jwt_verify_request(request: Request) -> Response:
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
-        errors: list[str] = []
-        if jwt_validate_token(errors=errors,
+        if jwt_validate_token(errors=None,
                               nature="A",
                               token=token):
             bad_token = False
@@ -81,8 +77,8 @@ def jwt_assert_account(account_id: str) -> bool:
 
 def jwt_set_account(account_id: str,
                     claims: dict[str, Any],
-                    access_max_age: int = JWT_ACCESS_MAX_AGE,
-                    refresh_max_age: int = JWT_REFRESH_MAX_AGE,
+                    access_max_age: int = _JWT_CONFIG[JwtParam.ACCESS_MAX_AGE],
+                    refresh_max_age: int = _JWT_CONFIG[JwtParam.REFRESH_MAX_AGE],
                     grace_interval: int = None,
                     logger: Logger = None) -> None:
     """
@@ -177,16 +173,21 @@ def jwt_validate_token(errors: list[str] | None,
 
         # retrieve token data from database
         if nature and not (token_kid and token_kid[0:1] == nature):
+            if logger:
+                logger.error(f"Nature of token's 'kid' ('{token_kid}') not '{nature}'")
             op_errors.append("Invalid token")
         elif token_kid and len(token_kid) > 1 and \
                 token_kid[0:1] in ["A", "R"] and token_kid[1:].isdigit():
             # token was likely issued locally
-            where_data: dict[str, Any] = {JWT_DB_COL_KID: int(token_kid[1:])}
+            where_data: dict[str, Any] = {
+                _JWT_DATABASE[JwtDbParam.COL_KID]: int(token_kid[1:])
+            }
             if account_id:
-                where_data[JWT_DB_COL_ACCOUNT] = account_id
+                where_data[_JWT_DATABASE[JwtDbParam.COL_ACCOUNT]] = account_id
             recs: list[tuple[str]] = db_select(errors=op_errors,
-                                               sel_stmt=f"SELECT {JWT_DB_COL_ALGORITHM}, {JWT_DB_COL_DECODER} "
-                                                        f"FROM {JWT_DB_TABLE}",
+                                               sel_stmt=f"SELECT {_JWT_DATABASE[JwtDbParam.COL_ALGORITHM]}, "
+                                                        f"{_JWT_DATABASE[JwtDbParam.COL_DECODER]} "
+                                                        f"FROM {_JWT_DATABASE[JwtDbParam.TABLE]}",
                                                where_data=where_data,
                                                logger=logger)
             if recs:
@@ -200,8 +201,8 @@ def jwt_validate_token(errors: list[str] | None,
                     logger.error(msg="Token not in the database")
                 op_errors.append("Invalid token")
         else:
-            token_alg = JWT_DEFAULT_ALGORITHM
-            token_decoder = JWT_DECODING_KEY
+            token_alg = _JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM]
+            token_decoder = _JWT_CONFIG[JwtParam.DECODING_KEY]
 
         # validate the token
         if not op_errors:
@@ -225,7 +226,9 @@ def jwt_validate_token(errors: list[str] | None,
                                                      require=["iat", "iss", "exp", "sub"],
                                                      algorithms=token_alg)
                 if account_id and payload.get("sub") != account_id:
-                    op_errors.append("Token does not belong to account")
+                    if logger:
+                        logger.error(msg=f"Token does not belong to account '{account_id}'")
+                    op_errors.append("Invalid token")
                 else:
                     result = {
                         "header": token_header,
@@ -279,10 +282,10 @@ def jwt_revoke_token(errors: list[str] | None,
             op_errors.append("Invalid token")
         else:
             db_delete(errors=op_errors,
-                      delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
+                      delete_stmt=f"DELETE FROM {_JWT_DATABASE[JwtDbParam.TABLE]}",
                       where_data={
-                          JWT_DB_COL_KID: int(token_kid[1:]),
-                          JWT_DB_COL_ACCOUNT: account_id
+                          _JWT_DATABASE[JwtDbParam.COL_KID]: int(token_kid[1:]),
+                          _JWT_DATABASE[JwtDbParam.COL_ACCOUNT]: account_id
                       },
                       logger=logger)
     if op_errors:
@@ -453,10 +456,10 @@ def jwt_refresh_tokens(errors: list[str] | None,
             if db_conn:
                 # delete current refresh token
                 db_delete(errors=op_errors,
-                          delete_stmt=f"DELETE FROM {JWT_DB_TABLE}",
+                          delete_stmt=f"DELETE FROM {_JWT_DATABASE[JwtDbParam.TABLE]}",
                           where_data={
-                              JWT_DB_COL_KID: int(token_kid[1:]),
-                              JWT_DB_COL_ACCOUNT: account_id
+                              _JWT_DATABASE[JwtDbParam.COL_KID]: int(token_kid[1:]),
+                              _JWT_DATABASE[JwtDbParam.COL_ACCOUNT]: account_id
                           },
                           connection=db_conn,
                           committable=False,
