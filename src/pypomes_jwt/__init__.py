@@ -1,5 +1,5 @@
-from .jwt_constants import (
-    JwtParam, JwtDbParam
+from .jwt_configuration import (
+    JwtConfig, JwtDbConfig
 )
 from .jwt_pomes import (
     jwt_needed, jwt_verify_request,
@@ -10,7 +10,7 @@ from .jwt_pomes import (
 
 __all__ = [
     # jwt_constants
-    "JwtParam", "JwtDbParam",
+    "JwtConfig", "JwtDbConfig",
     # jwt_pomes
     "jwt_needed", "jwt_verify_request",
     "jwt_assert_account", "jwt_set_account", "jwt_remove_account",

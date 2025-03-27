@@ -12,9 +12,7 @@ from pypomes_db import (
 from threading import Lock
 from typing import Any
 
-from .jwt_constants import (
-    JwtParam, JwtDbParam, _JWT_CONFIG, _JWT_DB
-)
+from .jwt_configuration import JwtConfig, JwtDbConfig
 
 
 class JwtRegistry:
@@ -141,8 +139,8 @@ class JwtRegistry:
 
         # remove from database
         db_delete(errors=None,
-                  delete_stmt=f"DELETE FROM {_JWT_DB[JwtDbParam.TABLE]}",
-                  where_data={_JWT_DB[JwtDbParam.COL_ACCOUNT]: account_id},
+                  delete_stmt=f"DELETE FROM {JwtDbConfig.value}",
+                  where_data={JwtDbConfig.COL_ACCOUNT.value: account_id},
                   logger=logger)
         if logger:
             if account_data:
@@ -216,8 +214,8 @@ class JwtRegistry:
                                                                tz=timezone.utc).isoformat()
         # may raise an exception
         return jwt.encode(payload=current_claims,
-                          key=_JWT_CONFIG[JwtParam.ENCODING_KEY],
-                          algorithm=_JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM],
+                          key=JwtConfig.ENCODING_KEY.value,
+                          algorithm=JwtConfig.DEFAULT_ALGORITHM.value,
                           headers={"kid": nature})
 
     def issue_tokens(self,
@@ -277,8 +275,8 @@ class JwtRegistry:
                                                                    tz=timezone.utc).isoformat()
             # may raise an exception
             refresh_token: str = jwt.encode(payload=current_claims,
-                                            key=_JWT_CONFIG[JwtParam.ENCODING_KEY],
-                                            algorithm=_JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM],
+                                            key=JwtConfig.ENCODING_KEY.value,
+                                            algorithm=JwtConfig.DEFAULT_ALGORITHM.value,
                                             headers={"kid": "R0"})
 
             # make sure to have a database connection
@@ -293,14 +291,14 @@ class JwtRegistry:
                                                    logger=logger)
                 # issue the definitive refresh token
                 refresh_token = jwt.encode(payload=current_claims,
-                                           key=_JWT_CONFIG[JwtParam.ENCODING_KEY],
-                                           algorithm=_JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM],
+                                           key=JwtConfig.ENCODING_KEY.value,
+                                           algorithm=JwtConfig.DEFAULT_ALGORITHM.value,
                                            headers={"kid": f"R{token_id}"})
                 # persist it
                 db_update(errors=errors,
-                          update_stmt=f"UPDATE {_JWT_DB[JwtDbParam.TABLE]}",
-                          update_data={_JWT_DB[JwtDbParam.COL_TOKEN]: refresh_token},
-                          where_data={_JWT_DB[JwtDbParam.COL_KID]: token_id},
+                          update_stmt=f"UPDATE {JwtDbConfig.TABLE.value}",
+                          update_data={JwtDbConfig.COL_TOKEN.value: refresh_token},
+                          where_data={JwtDbConfig.COL_KID.value: token_id},
                           connection=curr_conn,
                           committable=False,
                           logger=logger)
@@ -322,8 +320,8 @@ class JwtRegistry:
             current_claims["exp"] = just_now + account_data.get("access-max-age")
             # may raise an exception
             access_token: str = jwt.encode(payload=current_claims,
-                                           key=_JWT_CONFIG[JwtParam.ENCODING_KEY],
-                                           algorithm=_JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM],
+                                           key=JwtConfig.ENCODING_KEY.value,
+                                           algorithm=JwtConfig.DEFAULT_ALGORITHM.value,
                                            headers={"kid": f"A{token_id}"})
             # return the token data
             return {
@@ -381,9 +379,9 @@ def _jwt_persist_token(account_id: str,
     # noinspection PyTypeChecker
     recs: list[tuple[int, str, str, str]] = \
         db_select(errors=errors,
-                  sel_stmt=f"SELECT {_JWT_DB[JwtDbParam.COL_KID]}, {_JWT_DB[JwtDbParam.COL_TOKEN]} "
-                           f"FROM {_JWT_DB[JwtDbParam.TABLE]}",
-                  where_data={_JWT_DB[JwtDbParam.COL_ACCOUNT]: account_id},
+                  sel_stmt=f"SELECT {JwtDbConfig.COL_KID.value}, {JwtDbConfig.COL_TOKEN.value} "
+                           f"FROM {JwtDbConfig.TABLE.value}",
+                  where_data={JwtDbConfig.COL_ACCOUNT.value: account_id},
                   connection=db_conn,
                   committable=False,
                   logger=logger)
@@ -424,8 +422,8 @@ def _jwt_persist_token(account_id: str,
     # remove expired tokens from persistence
     if expired:
         db_delete(errors=errors,
-                  delete_stmt=f"DELETE FROM {_JWT_DB[JwtDbParam.TABLE]}",
-                  where_data={_JWT_DB[JwtDbParam.COL_KID]: expired},
+                  delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE.value}",
+                  where_data={JwtDbConfig.COL_KID.value: expired},
                   connection=db_conn,
                   committable=False,
                   logger=logger)
@@ -435,11 +433,11 @@ def _jwt_persist_token(account_id: str,
             logger.debug(msg=f"{len(expired)} tokens of account "
                              f"'{account_id}' removed from storage")
 
-    if 0 < _JWT_CONFIG[JwtParam.ACCOUNT_LIMIT] <= len(recs) - len(expired):
+    if 0 < JwtConfig.ACCOUNT_LIMIT.value <= len(recs) - len(expired):
         # delete the oldest token to make way for the new one
         db_delete(errors=errors,
-                  delete_stmt=f"DELETE FROM {_JWT_DB[JwtDbParam.TABLE]}",
-                  where_data={_JWT_DB[JwtDbParam.COL_KID]: oldest_id},
+                  delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE.value}",
+                  where_data={JwtDbConfig.COL_KID.value: oldest_id},
                   connection=db_conn,
                   committable=False,
                   logger=logger)
@@ -450,12 +448,12 @@ def _jwt_persist_token(account_id: str,
                              f"'{account_id}' removed from storage")
     # persist token
     db_insert(errors=errors,
-              insert_stmt=f"INSERT INTO {_JWT_DB[JwtDbParam.TABLE]}",
+              insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE.value}",
               insert_data={
-                  _JWT_DB[JwtDbParam.COL_ACCOUNT]: account_id,
-                  _JWT_DB[JwtDbParam.COL_TOKEN]: jwt_token,
-                  _JWT_DB[JwtDbParam.COL_ALGORITHM]: _JWT_CONFIG[JwtParam.DEFAULT_ALGORITHM],
-                  _JWT_DB[JwtDbParam.COL_DECODER]: urlsafe_b64encode(_JWT_CONFIG[JwtParam.DECODING_KEY]).decode()
+                  JwtDbConfig.COL_ACCOUNT.value: account_id,
+                  JwtDbConfig.COL_TOKEN.value: jwt_token,
+                  JwtDbConfig.COL_ALGORITHM.value: JwtConfig.DEFAULT_ALGORITHM.value,
+                  JwtDbConfig.COL_DECODER.value: urlsafe_b64encode(s=JwtConfig.DECODING_KEY.value).decode()
               },
               connection=db_conn,
               committable=False,
@@ -467,13 +465,13 @@ def _jwt_persist_token(account_id: str,
     # HAZARD: JWT_DB_COL_TOKEN's column type might prevent it for being used in a WHERE clause
     where_clause: str | None = None
     if existing_ids:
-        where_clause = f"{_JWT_DB[JwtDbParam.COL_KID]} NOT IN {existing_ids}"
+        where_clause = f"{JwtDbConfig.COL_KID.value} NOT IN {existing_ids}"
         where_clause = where_clause.replace("[", "(", 1).replace("]", ")", 1)
     reply: list[tuple[int]] = db_select(errors=errors,
-                                        sel_stmt=f"SELECT {_JWT_DB[JwtDbParam.COL_KID]} "
-                                                 f"FROM {_JWT_DB[JwtDbParam.TABLE]}",
+                                        sel_stmt=f"SELECT {JwtDbConfig.COL_KID.value} "
+                                                 f"FROM {JwtDbConfig.TABLE.value}",
                                         where_clause=where_clause,
-                                        where_data={_JWT_DB[JwtDbParam.COL_ACCOUNT]: account_id},
+                                        where_data={JwtDbConfig.COL_ACCOUNT.value: account_id},
                                         require_count=1,
                                         connection=db_conn,
                                         committable=False,
