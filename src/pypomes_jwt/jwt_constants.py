@@ -23,10 +23,6 @@ class JwtParam(StrEnum):
     ENCODING_KEY = "encoding-key"
     REFRESH_MAX_AGE = "refresh-max-age"
 
-    def __str__(self) -> str:  # noqa: D105
-        # noinspection PyTypeChecker
-        return self.value
-
 
 class JwtDbParam(StrEnum):
     """
@@ -46,10 +42,6 @@ class JwtDbParam(StrEnum):
     COL_DECODER = "col-decoder"
     COL_KID = "col-kid"
     COL_TOKEN = "col-token"
-
-    def __str__(self) -> str:  # noqa: D105
-        # noinspection PyTypeChecker
-        return self.value
 
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
@@ -87,7 +79,7 @@ _JWT_CONFIG: Final[dict[JwtParam, Any]] = {
     JwtParam.REFRESH_MAX_AGE: env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
                                           def_value=86400)
 }
-_JWT_DATABASE: Final[JwtDbParam, Any] = {
+_JWT_DB: Final[JwtDbParam, Any] = {
     JwtDbParam.ENGINE: DbEngine(env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")),
     JwtDbParam.CLIENT: env_get_str(key=f"{APP_PREFIX}_JWT_DB_CLIENT"),  # for Oracle, only
     JwtDbParam.DRIVER: env_get_str(key=f"{APP_PREFIX}_JWT_DB_DRIVER"),  # for SQLServer, only
@@ -105,12 +97,12 @@ _JWT_DATABASE: Final[JwtDbParam, Any] = {
 }
 
 # define and validate the database engine
-if not db_setup(engine=_JWT_DATABASE[JwtDbParam.ENGINE],
-                db_name=_JWT_DATABASE[JwtDbParam.NAME],
-                db_user=_JWT_DATABASE[JwtDbParam.USER],
-                db_pwd=_JWT_DATABASE[JwtDbParam.PWD],
-                db_host=_JWT_DATABASE[JwtDbParam.HOST],
-                db_port=_JWT_DATABASE[JwtDbParam.PORT],
-                db_client=_JWT_DATABASE[JwtDbParam.CLIENT],
-                db_driver=_JWT_DATABASE[JwtDbParam.DRIVER]):
+if not db_setup(engine=_JWT_DB[JwtDbParam.ENGINE],
+                db_name=_JWT_DB[JwtDbParam.NAME],
+                db_user=_JWT_DB[JwtDbParam.USER],
+                db_pwd=_JWT_DB[JwtDbParam.PWD],
+                db_host=_JWT_DB[JwtDbParam.HOST],
+                db_port=_JWT_DB[JwtDbParam.PORT],
+                db_client=_JWT_DB[JwtDbParam.CLIENT],
+                db_driver=_JWT_DB[JwtDbParam.DRIVER]):
     stderr.write("Invalid database parameters\n")
