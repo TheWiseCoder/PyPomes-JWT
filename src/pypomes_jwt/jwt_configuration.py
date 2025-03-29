@@ -1,14 +1,12 @@
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
-from enum import Enum
+from enum import Enum, StrEnum
 from pypomes_core import (
     APP_PREFIX,
     env_get_str, env_get_bytes, env_get_int
 )
-from pypomes_db import DbEngine, db_setup
 from secrets import token_bytes
-from sys import stderr
 
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
@@ -52,34 +50,14 @@ class JwtConfig(Enum):
                                        def_value=86400)
 
 
-class JwtDbConfig(Enum):
+class JwtDbConfig(StrEnum):
     """
     Parameters for JWT databse connection.
     """
-    ENGINE: str = DbEngine(env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE"))
-    CLIENT: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_CLIENT")  # for Oracle, only
-    DRIVER: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_DRIVER")  # for SQLServer, only
-    NAME: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_NAME")
-    HOST: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_HOST")
-    PORT: int = env_get_int(key=f"{APP_PREFIX}_JWT_DB_PORT")
-    USER: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_USER")
-    PWD: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_PWD")
+    ENGINE: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
     TABLE: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
     COL_ACCOUNT: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
     COL_ALGORITHM: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM")
     COL_DECODER: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER")
     COL_KID: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID")
     COL_TOKEN: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
-
-
-# define and validate the database engine
-# noinspection PyTypeChecker
-if not db_setup(engine=JwtDbConfig.ENGINE.value,
-                db_name=JwtDbConfig.NAME.value,
-                db_user=JwtDbConfig.USER.value,
-                db_pwd=JwtDbConfig.PWD.value,
-                db_host=JwtDbConfig.HOST.value,
-                db_port=JwtDbConfig.PORT.value,
-                db_client=JwtDbConfig.CLIENT.value,
-                db_driver=JwtDbConfig.DRIVER.value):
-    stderr.write("Invalid database parameters\n")

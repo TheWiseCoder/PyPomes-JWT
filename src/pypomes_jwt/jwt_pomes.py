@@ -5,7 +5,8 @@ from flask import Request, Response, request
 from logging import Logger
 from pypomes_core import exc_format
 from pypomes_db import (
-    db_connect, db_commit, db_rollback, db_select, db_delete
+    DbEngine, db_connect, db_commit,
+    db_rollback, db_select, db_delete
 )
 from typing import Any
 
@@ -177,14 +178,15 @@ def jwt_validate_token(errors: list[str] | None,
         elif token_kid and len(token_kid) > 1 and \
                 token_kid[0:1] in ["A", "R"] and token_kid[1:].isdigit():
             # token was likely issued locally
-            where_data: dict[str, Any] = {JwtDbConfig.COL_KID.value: int(token_kid[1:])}
+            where_data: dict[str, Any] = {JwtDbConfig.COL_KID: int(token_kid[1:])}
             if account_id:
-                where_data[JwtDbConfig.COL_ACCOUNT.value] = account_id
+                where_data[JwtDbConfig.COL_ACCOUNT] = account_id
             recs: list[tuple[str]] = db_select(errors=op_errors,
-                                               sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM.value}, "
-                                                        f"{JwtDbConfig.COL_DECODER.value} "
-                                                        f"FROM {JwtDbConfig.TABLE.value}",
+                                               sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM}, "
+                                                        f"{JwtDbConfig.COL_DECODER} "
+                                                        f"FROM {JwtDbConfig.TABLE}",
                                                where_data=where_data,
+                                               engine=DbEngine(JwtDbConfig.ENGINE),
                                                logger=logger)
             if recs:
                 token_alg = recs[0][0]
@@ -278,11 +280,12 @@ def jwt_revoke_token(errors: list[str] | None,
             op_errors.append("Invalid token")
         else:
             db_delete(errors=op_errors,
-                      delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE.value}",
+                      delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                       where_data={
-                          JwtDbConfig.COL_KID.value: int(token_kid[1:]),
-                          JwtDbConfig.COL_ACCOUNT.value: account_id
+                          JwtDbConfig.COL_KID: int(token_kid[1:]),
+                          JwtDbConfig.COL_ACCOUNT: account_id
                       },
+                      engine=DbEngine(JwtDbConfig.ENGINE),
                       logger=logger)
     if op_errors:
         if logger:
@@ -448,15 +451,17 @@ def jwt_refresh_tokens(errors: list[str] | None,
             # start the database transaction
             db_conn: Any = db_connect(errors=op_errors,
                                       autocommit=False,
+                                      engine=DbEngine(JwtDbConfig.ENGINE),
                                       logger=logger)
             if db_conn:
                 # delete current refresh token
                 db_delete(errors=op_errors,
-                          delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE.value}",
+                          delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                           where_data={
-                              JwtDbConfig.COL_KID.value: int(token_kid[1:]),
-                              JwtDbConfig.COL_ACCOUNT.value: account_id
+                              JwtDbConfig.COL_KID: int(token_kid[1:]),
+                              JwtDbConfig.COL_ACCOUNT: account_id
                           },
+                          engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=db_conn,
                           committable=False,
                           logger=logger)
