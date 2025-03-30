@@ -10,7 +10,7 @@ from pypomes_db import (
 )
 from typing import Any
 
-from .jwt_configuration import JwtConfig, JwtDbConfig
+from .jwt_config import JwtConfig, JwtDbConfig
 from .jwt_registry import JwtRegistry
 
 # the JWT registry
@@ -511,8 +511,8 @@ def jwt_get_claims(errors: list[str] | None,
     """
     Retrieve and return the claims set of a JWT *token*.
 
-    Any well-constructed JWT token may be provided in *token*, as this operation is not restricted to
-    locally issued tokens. Note that neither the token's signature nor its expiration is verified.
+    Any well-constructed JWT token may be provided in *token*, as this operation is not restricted
+    to locally issued tokens. Note that neither the token's signature nor its expiration is verified.
 
     Structure of the returned data, for locally issued tokens:
       {

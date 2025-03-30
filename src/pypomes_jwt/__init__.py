@@ -1,4 +1,4 @@
-from .jwt_configuration import (
+from .jwt_config import (
     JwtConfig, JwtDbConfig
 )
 from .jwt_pomes import (

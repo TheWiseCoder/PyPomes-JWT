@@ -12,7 +12,7 @@ from pypomes_db import (
 from threading import Lock
 from typing import Any
 
-from .jwt_configuration import JwtConfig, JwtDbConfig
+from .jwt_config import JwtConfig, JwtDbConfig
 
 
 class JwtRegistry:
@@ -205,14 +205,8 @@ class JwtRegistry:
         current_claims["iat"] = just_now
         if grace_interval:
             current_claims["nbf"] = just_now + grace_interval
-            current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["nbf"],
-                                                                  tz=timezone.utc).isoformat()
-        else:
-            current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
-                                                                  tz=timezone.utc).isoformat()
         current_claims["exp"] = just_now + duration
-        current_claims["valid-until"] = datetime.fromtimestamp(timestamp=current_claims["exp"],
-                                                               tz=timezone.utc).isoformat()
+
         # may raise an exception
         return jwt.encode(payload=current_claims,
                           key=JwtConfig.ENCODING_KEY.value,
@@ -265,15 +259,9 @@ class JwtRegistry:
             grace_interval = account_data.get("grace-interval")
             if grace_interval:
                 current_claims["nbf"] = just_now + grace_interval
-                current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["nbf"],
-                                                                      tz=timezone.utc).isoformat()
-            else:
-                current_claims["valid-from"] = datetime.fromtimestamp(timestamp=current_claims["iat"],
-                                                                      tz=timezone.utc).isoformat()
+
             # issue a candidate refresh token first, and persist it
             current_claims["exp"] = just_now + account_data.get("refresh-max-age")
-            current_claims["valid-until"] = datetime.fromtimestamp(timestamp=current_claims["exp"],
-                                                                   tz=timezone.utc).isoformat()
             # may raise an exception
             refresh_token: str = jwt.encode(payload=current_claims,
                                             key=JwtConfig.ENCODING_KEY.value,
