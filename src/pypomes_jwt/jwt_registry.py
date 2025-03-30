@@ -26,7 +26,7 @@ class JwtRegistry:
          <account-id>: {
            "access-max-age": <int>,         # defaults to JWT_ACCESS_MAX_AGE (in seconds)
            "refresh-max-age": <int>,        # defaults to JWT_REFRESH_MAX_AGE (in seconds)
-           "grace-interval": <int>,         # time to wait for token to be valid, in seconds
+           "lead-interval": <int>,          # time to wait for token to be valid, in seconds
            "claims": {
              "iss": <string>,               # token'ss issuer
              "birthdate": <string>,         # subject's birth date
@@ -35,9 +35,6 @@ class JwtRegistry:
              "name": <string>,              # subject's name
              "roles": <List[str]>,          # subject roles
              "nonce": <string>,             # used to associate a Client session with a token
-             # output, only
-             "valid-from": <string>,        # token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
-             "valid-until": <string>,       # token's finish (<YYYY-MM-DDThh:mm:ss+00:00>)
              ...
            }
          },
@@ -63,8 +60,6 @@ class JwtRegistry:
 
     Account-related claims are optional claims, and convey information about the registered account they belong to.
     Alhough they can be freely specified, these are some of the most commonly used claims:
-       "valid-from": <string>   token's start (<YYYY-MM-DDThh:mm:ss+00:00>)
-       "valid-until": <string>  token's finish (<YYYY-MM-DDThh:mm:ss+00.00>)
        "birthdate": <string>    subject's birth date
        "email": <string>        subject's email
        "gender": <string>       subject's gender
@@ -92,7 +87,7 @@ class JwtRegistry:
                     claims: dict[str, Any],
                     access_max_age: int,
                     refresh_max_age: int,
-                    grace_interval: int | None,
+                    lead_interval: int | None,
                     logger: Logger = None) -> None:
         """
         Add to storage the parameters needed to produce and validate JWT tokens for *account_id*.
@@ -105,7 +100,7 @@ class JwtRegistry:
         :param claims: the JWT claimset, as key-value pairs
         :param access_max_age: access token duration, in seconds (at least 60 seconds)
         :param refresh_max_age: refresh token duration, in seconds (greater than *access_max_age*)
-        :param grace_interval: time to wait for token to be valid, in seconds
+        :param lead_interval: time to wait for token to be valid, in seconds
         :param logger: optional logger
         """
         # build and store the access data for the account
@@ -114,7 +109,7 @@ class JwtRegistry:
                 self.access_registry[account_id] = {
                     "access-max-age": access_max_age,
                     "refresh-max-age": refresh_max_age,
-                    "grace-interval": grace_interval,
+                    "lead-interval": lead_interval,
                     "claims": claims or {}
                 }
                 if logger:
@@ -155,7 +150,7 @@ class JwtRegistry:
                     account_id: str,
                     nature: str,
                     duration: int,
-                    grace_interval: int = None,
+                    lead_interval: int = None,
                     claims: dict[str, Any] = None,
                     logger: Logger = None) -> str:
         """
@@ -170,7 +165,7 @@ class JwtRegistry:
         :param nature: the token's nature, must be a single letter in the range *[B-Z]*, less *R*
         :param duration: the number of seconds for the token to remain valid (at least 60 seconds)
         :param claims: optional token's claims
-        :param grace_interval: optional interval for the token to become active (in seconds)
+        :param lead_interval: optional interval for the token to become active (in seconds)
         :param logger: optional logger
         :return: the JWT token
         :raises RuntimeError: invalid parameter
@@ -203,8 +198,8 @@ class JwtRegistry:
         current_claims["sub"] = account_id
         just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
         current_claims["iat"] = just_now
-        if grace_interval:
-            current_claims["nbf"] = just_now + grace_interval
+        if lead_interval:
+            current_claims["nbf"] = just_now + lead_interval
         current_claims["exp"] = just_now + duration
 
         # may raise an exception
@@ -256,9 +251,9 @@ class JwtRegistry:
 
             just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
             current_claims["iat"] = just_now
-            grace_interval = account_data.get("grace-interval")
-            if grace_interval:
-                current_claims["nbf"] = just_now + grace_interval
+            lead_interval = account_data.get("lead-interval")
+            if lead_interval:
+                current_claims["nbf"] = just_now + lead_interval
 
             # issue a candidate refresh token first, and persist it
             current_claims["exp"] = just_now + account_data.get("refresh-max-age")

@@ -78,7 +78,7 @@ def jwt_set_account(account_id: str,
                     claims: dict[str, Any],
                     access_max_age: int = JwtConfig.ACCESS_MAX_AGE.value,
                     refresh_max_age: int = JwtConfig.REFRESH_MAX_AGE.value,
-                    grace_interval: int = None,
+                    lead_interval: int = None,
                     logger: Logger = None) -> None:
     """
     Establish the data needed to obtain JWT tokens for *account_id*.
@@ -92,7 +92,7 @@ def jwt_set_account(account_id: str,
     :param claims: the JWT claimset, as key-value pairs
     :param access_max_age: access token duration, in seconds
     :param refresh_max_age: refresh token duration, in seconds
-    :param grace_interval: optional time to wait for token to be valid, in seconds
+    :param lead_interval: optional time to wait for token to be valid, in seconds
     :param logger: optional logger
     """
     if logger:
@@ -103,7 +103,7 @@ def jwt_set_account(account_id: str,
                                claims=claims,
                                access_max_age=access_max_age,
                                refresh_max_age=max(refresh_max_age, access_max_age + 300),
-                               grace_interval=grace_interval,
+                               lead_interval=lead_interval,
                                logger=logger)
 
 
@@ -302,7 +302,7 @@ def jwt_issue_token(errors: list[str] | None,
                     account_id: str,
                     nature: str,
                     duration: int,
-                    grace_interval: int = None,
+                    lead_interval: int = None,
                     claims: dict[str, Any] = None,
                     logger: Logger = None) -> str:
     """
@@ -318,7 +318,7 @@ def jwt_issue_token(errors: list[str] | None,
     :param nature: the token's nature, must be a single letter in the range *[B-Z]*, less *R*
     :param duration: the number of seconds for the token to remain valid (at least 60 seconds)
     :param claims: optional token's claims
-    :param grace_interval: optional interval for the token to become active (in seconds)
+    :param lead_interval: optional interval for the token to become active (in seconds)
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -334,7 +334,7 @@ def jwt_issue_token(errors: list[str] | None,
                                             nature=nature,
                                             duration=duration,
                                             claims=claims,
-                                            grace_interval=grace_interval,
+                                            lead_interval=lead_interval,
                                             logger=logger)
         if logger:
             logger.debug(msg=f"Token is '{result}'")
