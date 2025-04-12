@@ -8,6 +8,7 @@ from pypomes_db import (
     DbEngine, db_connect, db_commit,
     db_rollback, db_select, db_delete
 )
+from pypomes_logging import PYPOMES_LOGGER
 from typing import Any
 
 from .jwt_config import JwtConfig, JwtDbConfig
@@ -36,7 +37,9 @@ def jwt_needed(func: callable) -> callable:
 
 def jwt_verify_request(request: Request) -> Response:
     """
-    Verify whether the HTTP *request* has the proper authorization, as per the JWT standard.
+    Verify whether the HTTP *request* has the proper authorization, as per the JWT standard..
+
+    This implementation assumes that HTTP requests are handled with the *Flask* framework.
 
     :param request: the *request* to be verified
     :return: *None* if the *request* is valid, otherwise a *Response* reporting the error
@@ -47,15 +50,19 @@ def jwt_verify_request(request: Request) -> Response:
     # retrieve the authorization from the request header
     auth_header: str = request.headers.get("Authorization")
 
-    # was a 'Bearer' authorization obtained ?
+    # validate the authorization token
     bad_token: bool = True
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
-        if jwt_validate_token(errors=None,
-                              nature="A",
-                              token=token):
-            bad_token = False
+        claims: dict[str, Any] = jwt_validate_token(errors=None,
+                                                    token=token,
+                                                    nature="A")
+        if claims:
+            login: str = request.values.get("login")
+            subject: str = claims["payload"].get("sub")
+            if not login or not subject or login == subject:
+                bad_token = False
 
     # deny the authorization
     if bad_token:
@@ -79,7 +86,7 @@ def jwt_set_account(account_id: str,
                     access_max_age: int = JwtConfig.ACCESS_MAX_AGE.value,
                     refresh_max_age: int = JwtConfig.REFRESH_MAX_AGE.value,
                     lead_interval: int = None,
-                    logger: Logger = None) -> None:
+                    logger: Logger = PYPOMES_LOGGER) -> None:
     """
     Establish the data needed to obtain JWT tokens for *account_id*.
 
@@ -108,7 +115,7 @@ def jwt_set_account(account_id: str,
 
 
 def jwt_remove_account(account_id: str,
-                       logger: Logger = None) -> bool:
+                       logger: Logger = PYPOMES_LOGGER) -> bool:
     """
     Remove from storage the JWT access data for *account_id*.
 
@@ -127,25 +134,26 @@ def jwt_validate_token(errors: list[str] | None,
                        token: str,
                        nature: str = None,
                        account_id: str = None,
-                       logger: Logger = None) -> dict[str, Any] | None:
+                       logger: Logger = PYPOMES_LOGGER) -> dict[str, Any] | None:
     """
     Verify if *token* ia a valid JWT token.
 
-    Raise an appropriate exception if validation failed. Attempt to validate non locally issued tokens
-    will not succeed. if *nature* is provided, validate whether *token* is of that nature.
-    A token issued locally has the header claim *kid* starting with *A* (for *Access*) or *R* (for *Refresh*),
-    followed by its id in the token database, or as a single letter in the range *[B-Z]*, less *R*.
-    If the *kid* claim contains such an id, then the cryptographic key needed for validation
-    will be obtained from the token database. Otherwise, the current decoding key is used.
+    Attempt to validate non locally issued tokens will not succeed. If *nature* is provided,
+    validate whether *token* is of that nature. A token issued locally has the header claim *kid*
+    starting with *A* (for *Access*) or *R* (for *Refresh*), followed by its id in the token database,
+    or as a single letter in the range *[B-Z]*, less *R*. If the *kid* claim contains such an id,
+    then the cryptographic key needed for validation will be obtained from the token database.
+    Otherwise, the current decoding key is used.
 
-    On success, return the token's claims (header and payload), as documented in *jwt_get_claims()*
+    On success, return the token's claims (*header* and *payload*), as documented in *jwt_get_claims()*
+    On failure, *errors* will contain the reason(s) for rejecting *token*.
 
     :param errors: incidental error messages
     :param token: the token to be validated
     :param nature: prefix identifying the nature of locally issued tokens
     :param account_id: optionally, validate the token's account owner
     :param logger: optional logger
-    :return: The token's claims (header and payload) if if is valid, *None* otherwise
+    :return: The token's claims (*header* and *payload*) if is valid, *None* otherwise
     """
     # initialize the return variable
     result: dict[str, Any] | None = None
@@ -251,7 +259,7 @@ def jwt_validate_token(errors: list[str] | None,
 def jwt_revoke_token(errors: list[str] | None,
                      account_id: str,
                      token: str,
-                     logger: Logger = None) -> bool:
+                     logger: Logger = PYPOMES_LOGGER) -> bool:
     """
     Revoke the *refresh_token* associated with *account_id*.
 
@@ -304,7 +312,7 @@ def jwt_issue_token(errors: list[str] | None,
                     duration: int,
                     lead_interval: int = None,
                     claims: dict[str, Any] = None,
-                    logger: Logger = None) -> str:
+                    logger: Logger = PYPOMES_LOGGER) -> str:
     """
     Issue or refresh, and return, a JWT token associated with *account_id*, of the specified *nature*.
 
@@ -355,7 +363,7 @@ def jwt_issue_token(errors: list[str] | None,
 def jwt_issue_tokens(errors: list[str] | None,
                      account_id: str,
                      account_claims: dict[str, Any] = None,
-                     logger: Logger = None) -> dict[str, Any]:
+                     logger: Logger = PYPOMES_LOGGER) -> dict[str, Any]:
     """
     Issue the JWT token pair associated with *account_id*, for access and refresh operations.
 
@@ -409,7 +417,7 @@ def jwt_issue_tokens(errors: list[str] | None,
 def jwt_refresh_tokens(errors: list[str] | None,
                        account_id: str,
                        refresh_token: str,
-                       logger: Logger = None) -> dict[str, Any]:
+                       logger: Logger = PYPOMES_LOGGER) -> dict[str, Any]:
     """
     Refresh the JWT token pair associated with *account_id*, for access and refresh operations.
 
@@ -507,7 +515,7 @@ def jwt_refresh_tokens(errors: list[str] | None,
 
 def jwt_get_claims(errors: list[str] | None,
                    token: str,
-                   logger: Logger = None) -> dict[str, Any] | None:
+                   logger: Logger = PYPOMES_LOGGER) -> dict[str, Any] | None:
     """
     Retrieve and return the claims set of a JWT *token*.
 
