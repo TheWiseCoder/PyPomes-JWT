@@ -9,7 +9,6 @@ from pypomes_db import (
     DbEngine, db_connect, db_commit, db_rollback,
     db_select, db_insert, db_update, db_delete
 )
-from pypomes_logging import PYPOMES_LOGGER
 from threading import Lock
 from typing import Any
 
@@ -89,7 +88,7 @@ class JwtRegistry:
                     access_max_age: int,
                     refresh_max_age: int,
                     lead_interval: int | None,
-                    logger: Logger = PYPOMES_LOGGER) -> None:
+                    logger: Logger = None) -> None:
         """
         Add to storage the parameters needed to produce and validate JWT tokens for *account_id*.
 
@@ -153,7 +152,7 @@ class JwtRegistry:
                     duration: int,
                     lead_interval: int = None,
                     claims: dict[str, Any] = None,
-                    logger: Logger = PYPOMES_LOGGER) -> str:
+                    logger: Logger = None) -> str:
         """
         Issue an return a JWT token associated with *account_id*.
 
@@ -213,7 +212,7 @@ class JwtRegistry:
                      account_id: str,
                      account_claims: dict[str, Any] = None,
                      db_conn: Any = None,
-                     logger: Logger = PYPOMES_LOGGER) -> dict[str, Any]:
+                     logger: Logger = None) -> dict[str, Any]:
         """
         Issue and return a JWT token pair associated with *account_id*.
 
@@ -320,7 +319,7 @@ class JwtRegistry:
 
     def get_account_data(self,
                          account_id: str,
-                         logger: Logger = PYPOMES_LOGGER) -> dict[str, Any]:
+                         logger: Logger = None) -> dict[str, Any]:
         """
         Retrieve the JWT access data associated with *account_id*.
 
@@ -342,7 +341,7 @@ class JwtRegistry:
     def jwt_persist_token(account_id: str,
                           jwt_token: str,
                           db_conn: Any,
-                          logger: Logger = PYPOMES_LOGGER) -> int:
+                          logger: Logger = None) -> int:
         """
         Persist the given token, making sure that the account limit is complied with.
 
