@@ -1,6 +1,6 @@
 import jwt
 import sys
-from base64 import urlsafe_b64decode
+from base64 import b64decode
 from flask import Request, Response, request
 from logging import Logger
 from pypomes_core import exc_format
@@ -197,7 +197,7 @@ def jwt_validate_token(errors: list[str] | None,
                                                logger=logger)
             if recs:
                 token_alg = recs[0][0]
-                token_decoder = urlsafe_b64decode(recs[0][1])
+                token_decoder = b64decode(recs[0][1])
             elif op_errors:
                 if logger:
                     logger.error(msg=f"Error retrieving the token's decoder: {'; '.join(op_errors)}")
