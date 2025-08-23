@@ -2,7 +2,7 @@ import jwt
 import string
 import sys
 from base64 import b64encode
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from logging import Logger
 from pypomes_core import str_random
 from pypomes_db import (
@@ -133,8 +133,7 @@ class JwtRegistry:
             account_data = self.access_registry.pop(account_id, None)
 
         # remove from database
-        db_delete(errors=None,
-                  delete_stmt=f"DELETE FROM {JwtDbConfig}",
+        db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig}",
                   where_data={JwtDbConfig.COL_ACCOUNT: account_id},
                   engine=DbEngine(JwtDbConfig.ENGINE),
                   logger=logger)
@@ -196,7 +195,7 @@ class JwtRegistry:
         current_claims["jti"] = str_random(size=32,
                                            chars=string.ascii_letters + string.digits)
         current_claims["sub"] = account_id
-        just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+        just_now: int = int(datetime.now(tz=UTC).timestamp())
         current_claims["iat"] = just_now
         if lead_interval:
             current_claims["nbf"] = just_now + lead_interval
@@ -249,7 +248,7 @@ class JwtRegistry:
             current_claims["sub"] = account_id
             errors: list[str] = []
 
-            just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+            just_now: int = int(datetime.now(tz=UTC).timestamp())
             current_claims["iat"] = just_now
             lead_interval = account_data.get("lead-interval")
             if lead_interval:
@@ -264,9 +263,9 @@ class JwtRegistry:
                                             headers={"kid": "R0"})
 
             # make sure to have a database connection
-            curr_conn: Any = db_conn or db_connect(errors=errors,
-                                                   autocommit=False,
+            curr_conn: Any = db_conn or db_connect(autocommit=False,
                                                    engine=DbEngine(JwtDbConfig.ENGINE),
+                                                   errors=errors,
                                                    logger=logger)
             if curr_conn:
                 # persist the candidate token (may raise an exception)
@@ -280,24 +279,22 @@ class JwtRegistry:
                                            algorithm=JwtConfig.DEFAULT_ALGORITHM.value,
                                            headers={"kid": f"R{token_id}"})
                 # persist it
-                db_update(errors=errors,
-                          update_stmt=f"UPDATE {JwtDbConfig.TABLE}",
+                db_update(update_stmt=f"UPDATE {JwtDbConfig.TABLE}",
                           update_data={JwtDbConfig.COL_TOKEN: refresh_token},
                           where_data={JwtDbConfig.COL_KID: token_id},
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=curr_conn,
-                          committable=False,
+                          errors=errors,
                           logger=logger)
 
                 # wrap-up the transaction
                 if not db_conn:
                     if errors:
-                        db_rollback(errors=errors,
-                                    connection=curr_conn,
+                        db_rollback(connection=curr_conn,
                                     logger=logger)
                     else:
-                        db_commit(errors=errors,
-                                  connection=curr_conn,
+                        db_commit(connection=curr_conn,
+                                  errors=errors,
                                   logger=logger)
             if errors:
                 raise RuntimeError("; ".join(errors))
@@ -340,7 +337,7 @@ class JwtRegistry:
     @staticmethod
     def jwt_persist_token(account_id: str,
                           jwt_token: str,
-                          db_conn: Any,
+                          db_conn: Any = None,
                           logger: Logger = None) -> int:
         """
         Persist the given token, making sure that the account limit is complied with.
@@ -349,7 +346,9 @@ class JwtRegistry:
         If a token's expiration timestamp is in the past, it is removed from storage. If the maximum number
         of active tokens for *account_id* has been reached, the oldest active one is alse removed,
         to make room for the new *jwt_token*.
-        The provided database connection *db_conn* indicates that this operation is part of a larger transaction.
+
+        If provided, *db_conn* indicates that this operation is part of a larger database transaction.
+        Otherwise, the database transaction's scope is limited to this operation.
 
         :param account_id: the account identification
         :param jwt_token: the JWT token to persist
@@ -364,30 +363,28 @@ class JwtRegistry:
         errors: list[str] = []
         # noinspection PyTypeChecker
         recs: list[tuple[int, str, str, str]] = \
-            db_select(errors=errors,
-                      sel_stmt=f"SELECT {JwtDbConfig.COL_KID}, {JwtDbConfig.COL_TOKEN} "
+            db_select(sel_stmt=f"SELECT {JwtDbConfig.COL_KID}, {JwtDbConfig.COL_TOKEN} "
                                f"FROM {JwtDbConfig.TABLE}",
                       where_data={JwtDbConfig.COL_ACCOUNT: account_id},
                       engine=DbEngine(JwtDbConfig.ENGINE),
                       connection=db_conn,
-                      committable=False,
+                      errors=errors,
                       logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))
 
         if logger:
-            logger.debug(msg=f"Read {len(recs)} token from storage for account '{account_id}'")
+            logger.debug(msg=f"Retrieved {len(recs)} tokens from storage for account '{account_id}'")
         # remove the expired tokens
-        just_now: int = int(datetime.now(tz=timezone.utc).timestamp())
+        just_now: int = int(datetime.now(tz=UTC).timestamp())
         oldest_ts: int = sys.maxsize
         oldest_id: int | None = None
-        existing_ids: list[int] = []
         expired: list[int] = []
         for rec in recs:
             token: str = rec[1]
             token_id: int = rec[0]
-            token_payload: dict[str, Any] = (jwt_get_claims(errors=errors,
-                                                            token=token,
+            token_payload: dict[str, Any] = (jwt_get_claims(token=token,
+                                                            errors=errors,
                                                             logger=logger) or {}).get("payload")
             if errors:
                 raise RuntimeError("; ".join(errors))
@@ -403,17 +400,13 @@ class JwtRegistry:
                 oldest_ts = iat
                 oldest_id = token_id
 
-            # save token id
-            existing_ids.append(token_id)
-
         # remove expired tokens from persistence
         if expired:
-            db_delete(errors=errors,
-                      delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
+            db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                       where_data={JwtDbConfig.COL_KID: expired},
                       engine=DbEngine(JwtDbConfig.ENGINE),
                       connection=db_conn,
-                      committable=False,
+                      errors=errors,
                       logger=logger)
             if errors:
                 raise RuntimeError("; ".join(errors))
@@ -423,12 +416,11 @@ class JwtRegistry:
 
         if 0 < JwtConfig.ACCOUNT_LIMIT.value <= len(recs) - len(expired):
             # delete the oldest token to make way for the new one
-            db_delete(errors=errors,
-                      delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
+            db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                       where_data={JwtDbConfig.COL_KID: oldest_id},
                       engine=DbEngine(JwtDbConfig.ENGINE),
                       connection=db_conn,
-                      committable=False,
+                      errors=errors,
                       logger=logger)
             if errors:
                 raise RuntimeError("; ".join(errors))
@@ -436,37 +428,31 @@ class JwtRegistry:
                 logger.debug(msg="Oldest active token of account "
                                  f"'{account_id}' removed from storage")
         # persist token
-        db_insert(errors=errors,
-                  insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE}",
-                  insert_data={
-                      JwtDbConfig.COL_ACCOUNT: account_id,
-                      JwtDbConfig.COL_TOKEN: jwt_token,
-                      JwtDbConfig.COL_ALGORITHM: JwtConfig.DEFAULT_ALGORITHM.value,
-                      JwtDbConfig.COL_DECODER: b64encode(s=JwtConfig.DECODING_KEY.value).decode()
-                  },
-                  engine=DbEngine(JwtDbConfig.ENGINE),
-                  connection=db_conn,
-                  committable=False,
-                  logger=logger)
+        col_kid: int = db_insert(insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE}",
+                                 insert_data={
+                                     JwtDbConfig.COL_ACCOUNT: account_id,
+                                     JwtDbConfig.COL_TOKEN: jwt_token,
+                                     JwtDbConfig.COL_ALGORITHM: JwtConfig.DEFAULT_ALGORITHM.value,
+                                     JwtDbConfig.COL_DECODER: b64encode(s=JwtConfig.DECODING_KEY.value).decode()
+                                 },
+                                 return_cols={JwtDbConfig.COL_KID: int},
+                                 engine=DbEngine(JwtDbConfig.ENGINE),
+                                 connection=db_conn,
+                                 errors=errors,
+                                 logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))
 
         # obtain and return the token's storage id
-        # HAZARD: JWT_DB_COL_TOKEN's column type might prevent it for being used in a WHERE clause
-        where_clause: str | None = None
-        if existing_ids:
-            where_clause = f"{JwtDbConfig.COL_KID} NOT IN {existing_ids}"
-            where_clause = where_clause.replace("[", "(", 1).replace("]", ")", 1)
-        reply: list[tuple[int]] = db_select(errors=errors,
-                                            sel_stmt=f"SELECT {JwtDbConfig.COL_KID} "
+        reply: list[tuple[int]] = db_select(sel_stmt=f"SELECT {JwtDbConfig.COL_KID} "
                                                      f"FROM {JwtDbConfig.TABLE}",
-                                            where_clause=where_clause,
-                                            where_data={JwtDbConfig.COL_ACCOUNT: account_id},
+                                            where_data={JwtDbConfig.COL_KID: col_kid},
                                             min_count=1,
                                             max_count=1,
                                             engine=DbEngine(JwtDbConfig.ENGINE),
                                             connection=db_conn,
                                             committable=False,
+                                            errors=errors,
                                             logger=logger)
         if errors:
             raise RuntimeError("; ".join(errors))

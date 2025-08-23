@@ -23,7 +23,7 @@ def jwt_needed(func: callable) -> callable:
 
     :param func: the function being decorated
     """
-    # ruff: noqa: ANN003
+    # ruff: noqa: ANN003 - Missing type annotation for *{name}
     def wrapper(*args, **kwargs) -> Response:
         response: Response = jwt_verify_request(request=request)
         return response if response else func(*args, **kwargs)
@@ -54,8 +54,7 @@ def jwt_verify_request(request: Request) -> Response:
     if auth_header and auth_header.startswith("Bearer "):
         # yes, extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
-        claims: dict[str, Any] = jwt_validate_token(errors=None,
-                                                    token=token,
+        claims: dict[str, Any] = jwt_validate_token(token=token,
                                                     nature="A")
         if claims:
             login: str = request.values.get("login")
@@ -129,13 +128,13 @@ def jwt_remove_account(account_id: str,
                                          logger=logger)
 
 
-def jwt_validate_token(errors: list[str] | None,
-                       token: str,
+def jwt_validate_token(token: str,
                        nature: str = None,
                        account_id: str = None,
+                       errors: list[str] = None,
                        logger: Logger = None) -> dict[str, Any] | None:
     """
-    Verify if *token* ia a valid JWT token.
+    Verify if *token* is a valid JWT token.
 
     Attempt to validate non locally issued tokens will not succeed. If *nature* is provided,
     validate whether *token* is of that nature. A token issued locally has the header claim *kid*
@@ -147,12 +146,12 @@ def jwt_validate_token(errors: list[str] | None,
     On success, return the token's claims (*header* and *payload*), as documented in *jwt_get_claims()*
     On failure, *errors* will contain the reason(s) for rejecting *token*.
 
-    :param errors: incidental error messages
     :param token: the token to be validated
     :param nature: prefix identifying the nature of locally issued tokens
     :param account_id: optionally, validate the token's account owner
+    :param errors: incidental error messages
     :param logger: optional logger
-    :return: The token's claims (*header* and *payload*) if is valid, *None* otherwise
+    :return: The token's claims (*header* and *payload*) if it is valid, *None* otherwise
     """
     # initialize the return variable
     result: dict[str, Any] | None = None
@@ -188,12 +187,12 @@ def jwt_validate_token(errors: list[str] | None,
             where_data: dict[str, Any] = {JwtDbConfig.COL_KID: int(token_kid[1:])}
             if account_id:
                 where_data[JwtDbConfig.COL_ACCOUNT] = account_id
-            recs: list[tuple[str]] = db_select(errors=op_errors,
-                                               sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM}, "
+            recs: list[tuple[str]] = db_select(sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM}, "
                                                         f"{JwtDbConfig.COL_DECODER} "
                                                         f"FROM {JwtDbConfig.TABLE}",
                                                where_data=where_data,
                                                engine=DbEngine(JwtDbConfig.ENGINE),
+                                               errors=op_errors,
                                                logger=logger)
             if recs:
                 token_alg = recs[0][0]
@@ -277,9 +276,9 @@ def jwt_revoke_token(errors: list[str] | None,
         logger.debug(msg=f"Revoking token of account '{account_id}'")
 
     op_errors: list[str] = []
-    token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
-                                                      token=token,
+    token_claims: dict[str, Any] = jwt_validate_token(token=token,
                                                       account_id=account_id,
+                                                      errors=op_errors,
                                                       logger=logger)
     if not op_errors:
         token_kid: str = token_claims["header"].get("kid")
@@ -446,24 +445,23 @@ def jwt_refresh_tokens(errors: list[str] | None,
     # assert the refresh token
     if refresh_token:
         # is the refresh token valid ?
-        token_claims: dict[str, Any] = jwt_validate_token(errors=op_errors,
-                                                          token=refresh_token,
+        token_claims: dict[str, Any] = jwt_validate_token(token=refresh_token,
                                                           nature="R",
                                                           account_id=account_id,
+                                                          errors=op_errors,
                                                           logger=logger)
         if token_claims:
             # yes, proceed
             token_kid: str = token_claims["header"].get("kid")
 
             # start the database transaction
-            db_conn: Any = db_connect(errors=op_errors,
-                                      autocommit=False,
+            db_conn: Any = db_connect(autocommit=False,
                                       engine=DbEngine(JwtDbConfig.ENGINE),
+                                      errors=op_errors,
                                       logger=logger)
             if db_conn:
                 # delete current refresh token
-                db_delete(errors=op_errors,
-                          delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
+                db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                           where_data={
                               JwtDbConfig.COL_KID: int(token_kid[1:]),
                               JwtDbConfig.COL_ACCOUNT: account_id
@@ -471,6 +469,7 @@ def jwt_refresh_tokens(errors: list[str] | None,
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=db_conn,
                           committable=False,
+                          errors=op_errors,
                           logger=logger)
 
                 # issue the token pair
@@ -492,12 +491,11 @@ def jwt_refresh_tokens(errors: list[str] | None,
 
                 # wrap-up the transaction
                 if op_errors:
-                    db_rollback(errors=op_errors,
-                                connection=db_conn,
+                    db_rollback(connection=db_conn,
                                 logger=logger)
                 else:
-                    db_commit(errors=op_errors,
-                              connection=db_conn,
+                    db_commit(connection=db_conn,
+                              errors=op_errors,
                               logger=logger)
     else:
         # refresh token not found
@@ -512,11 +510,11 @@ def jwt_refresh_tokens(errors: list[str] | None,
     return result
 
 
-def jwt_get_claims(errors: list[str] | None,
-                   token: str,
+def jwt_get_claims(token: str,
+                   errors: list[str] = None,
                    logger: Logger = None) -> dict[str, Any] | None:
     """
-    Retrieve and return the claims set of a JWT *token*.
+    Retrieve the claims set of a JWT *token*.
 
     Any well-constructed JWT token may be provided in *token*, as this operation is not restricted
     to locally issued tokens. Note that neither the token's signature nor its expiration is verified.
@@ -548,8 +546,8 @@ def jwt_get_claims(errors: list[str] | None,
         }
       }
 
-    :param errors: incidental error messages
     :param token: the token to be inspected for claims
+    :param errors: incidental error messages
     :param logger: optional logger
     :return: the token's claimset, or *None* if error
     """

@@ -4,19 +4,29 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPubl
 from enum import Enum, StrEnum
 from pypomes_core import (
     APP_PREFIX,
-    env_get_str, env_get_bytes, env_get_int
+    env_get_str, env_get_bytes, env_get_int, env_get_enum
 )
 from secrets import token_bytes
+
+
+class JwtAlgorithm(StrEnum):
+    """
+    Supported decoding algorithms.
+    """
+    HS256 = "HS256"
+    HS512 = "HS512"
+    RS256 = "RS256"
+    RS512 = "RS512"
 
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
 _encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODING_KEY",
                                      encoding="base64url")
 _decoding_key: bytes
-# one of HS256, HS512, RS256, RS512
-_default_algorithm: str = env_get_str(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
-                                      def_value="RS256")
-if _default_algorithm in ["HS256", "HS512"]:
+_default_algorithm: JwtAlgorithm = env_get_enum(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
+                                                enum_class=JwtAlgorithm,
+                                                def_value=JwtAlgorithm.RS256)
+if _default_algorithm in [JwtAlgorithm.HS256, JwtAlgorithm.HS512]:
     if not _encoding_key:
         _encoding_key = token_bytes(nbytes=32)
     _decoding_key = _encoding_key
@@ -52,12 +62,12 @@ class JwtConfig(Enum):
 
 class JwtDbConfig(StrEnum):
     """
-    Parameters for JWT databse connection.
+    Parameters for JWT database connection.
     """
-    ENGINE: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
-    TABLE: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
-    COL_ACCOUNT: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
-    COL_ALGORITHM: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM")
-    COL_DECODER: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER")
-    COL_KID: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID")
-    COL_TOKEN: str = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
+    ENGINE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
+    TABLE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
+    COL_ACCOUNT = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
+    COL_ALGORITHM = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM")
+    COL_DECODER = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER")
+    COL_KID = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID")
+    COL_TOKEN = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
