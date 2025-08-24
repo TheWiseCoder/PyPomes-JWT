@@ -440,7 +440,10 @@ def jwt_refresh_tokens(account_id: str,
 
     if logger:
         logger.debug(msg=f"Refreshing a JWT token pair for '{account_id}'")
-    op_errors: list[str] = []
+
+    # make sure to have an errors list
+    if not isinstance(errors, list):
+        errors = []
 
     # assert the refresh token
     if refresh_token:
@@ -448,7 +451,7 @@ def jwt_refresh_tokens(account_id: str,
         token_claims: dict[str, Any] = jwt_validate_token(token=refresh_token,
                                                           nature="R",
                                                           account_id=account_id,
-                                                          errors=op_errors,
+                                                          errors=errors,
                                                           logger=logger)
         if token_claims:
             # yes, proceed
@@ -457,7 +460,7 @@ def jwt_refresh_tokens(account_id: str,
             # start the database transaction
             db_conn: Any = db_connect(autocommit=False,
                                       engine=DbEngine(JwtDbConfig.ENGINE),
-                                      errors=op_errors,
+                                      errors=errors,
                                       logger=logger)
             if db_conn:
                 # delete current refresh token
@@ -469,11 +472,11 @@ def jwt_refresh_tokens(account_id: str,
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=db_conn,
                           committable=False,
-                          errors=op_errors,
+                          errors=errors,
                           logger=logger)
 
                 # issue the token pair
-                if not op_errors:
+                if not errors:
                     try:
                         result = __jwt_registry.issue_tokens(account_id=account_id,
                                                              account_claims=token_claims.get("payload"),
@@ -487,27 +490,24 @@ def jwt_refresh_tokens(account_id: str,
                                                   exc_info=sys.exc_info())
                         if logger:
                             logger.error(msg=f"Error refreshing the token pair: {exc_err}")
-                        op_errors.append(exc_err)
+                        errors.append(exc_err)
 
                 # wrap-up the transaction
-                if op_errors:
+                if errors:
                     db_rollback(connection=db_conn,
                                 logger=logger)
                 else:
                     db_commit(connection=db_conn,
-                              errors=op_errors,
+                              errors=errors,
                               logger=logger)
                 db_close(connection=db_conn,
                          logger=logger)
     else:
         # refresh token not found
-        op_errors.append("Refresh token was not provided")
+        errors.append("Refresh token was not provided")
 
-    if op_errors:
-        if logger:
-            logger.error("; ".join(op_errors))
-        if isinstance(errors, list):
-            errors.extend(op_errors)
+    if errors and logger:
+        logger.error(msg="; ".join(errors))
 
     return result
 

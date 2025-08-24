@@ -62,14 +62,14 @@ def provider_register(provider_id: str,
     }
 
 
-def provider_get_token(errors: list[str] | None,
-                       provider_id: str,
+def provider_get_token(provider_id: str,
+                       errors: list[str] | None,
                        logger: Logger = None) -> str | None:
     """
     Obtain an authentication token from the external provider *provider_id*.
 
-    :param errors: incidental error messages
     :param provider_id: the provider's identification
+    :param errors: incidental error messages
     :param logger: optional logger
     """
     # initialize the return variable
