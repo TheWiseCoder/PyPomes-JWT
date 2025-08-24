@@ -6,7 +6,7 @@ from logging import Logger
 from pypomes_core import exc_format
 from pypomes_db import (
     DbEngine, db_connect, db_commit,
-    db_rollback, db_select, db_delete
+    db_rollback, db_close, db_select, db_delete
 )
 from typing import Any
 
@@ -254,18 +254,18 @@ def jwt_validate_token(token: str,
     return result
 
 
-def jwt_revoke_token(errors: list[str] | None,
-                     account_id: str,
+def jwt_revoke_token(account_id: str,
                      token: str,
+                     errors: list[str] = None,
                      logger: Logger = None) -> bool:
     """
     Revoke the *refresh_token* associated with *account_id*.
 
     Revoke operations require access to a database table defined by *JWT_DB_TABLE*.
 
-    :param errors: incidental error messages
     :param account_id: the account identification
     :param token: the token to be revoked
+    :param errors: incidental error messages
     :param logger: optional logger
     :return: *True* if operation could be performed, *False* otherwise
     """
@@ -285,13 +285,13 @@ def jwt_revoke_token(errors: list[str] | None,
         if token_kid[0:1] not in ["A", "R"]:
             op_errors.append("Invalid token")
         else:
-            db_delete(errors=op_errors,
-                      delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
+            db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                       where_data={
                           JwtDbConfig.COL_KID: int(token_kid[1:]),
                           JwtDbConfig.COL_ACCOUNT: account_id
                       },
                       engine=DbEngine(JwtDbConfig.ENGINE),
+                      errors=op_errors,
                       logger=logger)
     if op_errors:
         if logger:
@@ -304,12 +304,12 @@ def jwt_revoke_token(errors: list[str] | None,
     return result
 
 
-def jwt_issue_token(errors: list[str] | None,
-                    account_id: str,
+def jwt_issue_token(account_id: str,
                     nature: str,
                     duration: int,
                     lead_interval: int = None,
                     claims: dict[str, Any] = None,
+                    errors: list[str] = None,
                     logger: Logger = None) -> str:
     """
     Issue or refresh, and return, a JWT token associated with *account_id*, of the specified *nature*.
@@ -319,12 +319,12 @@ def jwt_issue_token(errors: list[str] | None,
     The parameter *duration* specifies the token's validity interval (at least 60 seconds).
     These claims are ignored, if specified in *claims*: *iat*, *iss*, *exp*, *jti*, *nbf*, and *sub*.
 
-    :param errors: incidental error messages
     :param account_id: the account identification
     :param nature: the token's nature, must be a single letter in the range *[B-Z]*, less *R*
     :param duration: the number of seconds for the token to remain valid (at least 60 seconds)
     :param claims: optional token's claims
     :param lead_interval: optional interval for the token to become active (in seconds)
+    :param errors: incidental error messages
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -358,9 +358,9 @@ def jwt_issue_token(errors: list[str] | None,
     return result
 
 
-def jwt_issue_tokens(errors: list[str] | None,
-                     account_id: str,
+def jwt_issue_tokens(account_id: str,
                      account_claims: dict[str, Any] = None,
+                     errors: list[str] = None,
                      logger: Logger = None) -> dict[str, Any]:
     """
     Issue the JWT token pair associated with *account_id*, for access and refresh operations.
@@ -376,9 +376,9 @@ def jwt_issue_tokens(errors: list[str] | None,
       "refresh-token": <jwt-token>
     }
 
-    :param errors: incidental error messages
     :param account_id: the account identification
     :param account_claims: if provided, may supercede currently registered account-related claims
+    :param errors: incidental error messages
     :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
@@ -412,9 +412,9 @@ def jwt_issue_tokens(errors: list[str] | None,
     return result
 
 
-def jwt_refresh_tokens(errors: list[str] | None,
-                       account_id: str,
+def jwt_refresh_tokens(account_id: str,
                        refresh_token: str,
+                       errors: list[str] = None,
                        logger: Logger = None) -> dict[str, Any]:
     """
     Refresh the JWT token pair associated with *account_id*, for access and refresh operations.
@@ -497,6 +497,8 @@ def jwt_refresh_tokens(errors: list[str] | None,
                     db_commit(connection=db_conn,
                               errors=op_errors,
                               logger=logger)
+                db_close(connection=db_conn,
+                         logger=logger)
     else:
         # refresh token not found
         op_errors.append("Refresh token was not provided")
