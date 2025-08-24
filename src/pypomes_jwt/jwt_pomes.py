@@ -158,7 +158,10 @@ def jwt_validate_token(token: str,
 
     if logger:
         logger.debug(msg="Validate JWT token")
-    op_errors: list[str] = []
+
+    # make sure to have an errors list
+    if not isinstance(errors, list):
+        errors = []
 
     # extract needed data from token header
     token_header: dict[str, Any] | None = None
@@ -169,9 +172,9 @@ def jwt_validate_token(token: str,
                                   exc_info=sys.exc_info())
         if logger:
             logger.error(msg=f"Error retrieving the token's header: {exc_err}")
-        op_errors.append(exc_err)
+        errors.append(exc_err)
 
-    if not op_errors:
+    if not errors:
         token_kid: str = token_header.get("kid")
         token_alg: str | None = None
         token_decoder: bytes | None = None
@@ -180,7 +183,7 @@ def jwt_validate_token(token: str,
         if nature and not (token_kid and token_kid[0:1] == nature):
             if logger:
                 logger.error(f"Nature of token's 'kid' ('{token_kid}') not '{nature}'")
-            op_errors.append("Invalid token")
+            errors.append("Invalid token")
         elif token_kid and len(token_kid) > 1 and \
                 token_kid[0:1] in ["A", "R"] and token_kid[1:].isdigit():
             # token was likely issued locally
@@ -192,24 +195,24 @@ def jwt_validate_token(token: str,
                                                         f"FROM {JwtDbConfig.TABLE}",
                                                where_data=where_data,
                                                engine=DbEngine(JwtDbConfig.ENGINE),
-                                               errors=op_errors,
+                                               errors=errors,
                                                logger=logger)
             if recs:
                 token_alg = recs[0][0]
                 token_decoder = b64decode(recs[0][1])
-            elif op_errors:
+            elif errors:
                 if logger:
-                    logger.error(msg=f"Error retrieving the token's decoder: {'; '.join(op_errors)}")
+                    logger.error(msg=f"Error retrieving the token's decoder: {'; '.join(errors)}")
             else:
                 if logger:
                     logger.error(msg="Token not in the database")
-                op_errors.append("Invalid token")
+                errors.append("Invalid token")
         else:
             token_alg = JwtConfig.DEFAULT_ALGORITHM.value
             token_decoder = JwtConfig.DECODING_KEY.value
 
         # validate the token
-        if not op_errors:
+        if not errors:
             try:
                 # raises:
                 #   InvalidTokenError: token is invalid
@@ -232,7 +235,7 @@ def jwt_validate_token(token: str,
                 if account_id and payload.get("sub") != account_id:
                     if logger:
                         logger.error(msg=f"Token does not belong to account '{account_id}'")
-                    op_errors.append("Invalid token")
+                    errors.append("Invalid token")
                 else:
                     result = {
                         "header": token_header,
@@ -243,12 +246,9 @@ def jwt_validate_token(token: str,
                                           exc_info=sys.exc_info())
                 if logger:
                     logger.error(msg=f"Error decoding the token: {exc_err}")
-                op_errors.append(exc_err)
+                errors.append(exc_err)
 
-    if op_errors:
-        if isinstance(errors, list):
-            errors.extend(op_errors)
-    elif logger:
+    if not errors and logger:
         logger.debug(msg="Token is valid")
 
     return result
@@ -275,15 +275,18 @@ def jwt_revoke_token(account_id: str,
     if logger:
         logger.debug(msg=f"Revoking token of account '{account_id}'")
 
-    op_errors: list[str] = []
+    # make sure to have an errors list
+    if not isinstance(errors, list):
+        errors = []
+
     token_claims: dict[str, Any] = jwt_validate_token(token=token,
                                                       account_id=account_id,
-                                                      errors=op_errors,
+                                                      errors=errors,
                                                       logger=logger)
-    if not op_errors:
+    if not errors:
         token_kid: str = token_claims["header"].get("kid")
         if token_kid[0:1] not in ["A", "R"]:
-            op_errors.append("Invalid token")
+            errors.append("Invalid token")
         else:
             db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
                       where_data={
@@ -291,15 +294,12 @@ def jwt_revoke_token(account_id: str,
                           JwtDbConfig.COL_ACCOUNT: account_id
                       },
                       engine=DbEngine(JwtDbConfig.ENGINE),
-                      errors=op_errors,
+                      errors=errors,
                       logger=logger)
-    if op_errors:
-        if logger:
-            logger.error(msg="; ".join(op_errors))
-        if isinstance(errors, list):
-            errors.extend(op_errors)
-    else:
+    if not errors:
         result = True
+    elif logger:
+        logger.error(msg="; ".join(errors))
 
     return result
 
@@ -333,7 +333,6 @@ def jwt_issue_token(account_id: str,
 
     if logger:
         logger.debug(msg=f"Issuing a JWT token for '{account_id}'")
-    op_errors: list[str] = []
 
     try:
         result = __jwt_registry.issue_token(account_id=account_id,
@@ -350,10 +349,8 @@ def jwt_issue_token(account_id: str,
                                   exc_info=sys.exc_info())
         if logger:
             logger.error(msg=f"Error issuing the token: {exc_err}")
-        op_errors.append(exc_err)
-
-    if op_errors and isinstance(errors, list):
-        errors.extend(op_errors)
+        if isinstance(errors, list):
+            errors.append(exc_err)
 
     return result
 
@@ -387,7 +384,6 @@ def jwt_issue_tokens(account_id: str,
 
     if logger:
         logger.debug(msg=f"Issuing a JWT token pair for '{account_id}'")
-    op_errors: list[str] = []
 
     try:
         result = __jwt_registry.issue_tokens(account_id=account_id,
@@ -401,13 +397,8 @@ def jwt_issue_tokens(account_id: str,
                                   exc_info=sys.exc_info())
         if logger:
             logger.error(msg=f"Error issuing the token pair: {exc_err}")
-        op_errors.append(exc_err)
-
-    if op_errors:
-        if logger:
-            logger.error("; ".join(op_errors))
         if isinstance(errors, list):
-            errors.extend(op_errors)
+            errors.append(exc_err)
 
     return result
 
