@@ -371,7 +371,6 @@ class JwtRegistry:
                                                errors=errors,
                                                logger=logger)
         if not errors:
-
             # retrieve the account's tokens
             # noinspection PyTypeChecker
             recs: list[tuple[int, str, str, str]] = \
@@ -385,7 +384,7 @@ class JwtRegistry:
             if not errors:
                 if logger:
                     logger.debug(msg=f"Retrieved {len(recs)} tokens from storage for account '{account_id}'")
-                # remove the expired tokens
+                # process expired tokens
                 just_now: int = int(datetime.now(tz=UTC).timestamp())
                 oldest_ts: int = sys.maxsize
                 oldest_id: int | None = None
@@ -434,18 +433,23 @@ class JwtRegistry:
                                          f"'{account_id}' removed from storage")
                 # persist token
                 if not errors:
-                    result = db_insert(insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE}",
-                                       insert_data={
-                                           JwtDbConfig.COL_ACCOUNT: account_id,
-                                           JwtDbConfig.COL_TOKEN: jwt_token,
-                                           JwtDbConfig.COL_ALGORITHM: JwtConfig.DEFAULT_ALGORITHM.value,
-                                           JwtDbConfig.COL_DECODER: b64encode(s=JwtConfig.DECODING_KEY.value).decode()
-                                       },
-                                       return_cols={JwtDbConfig.COL_KID: int},
-                                       engine=DbEngine(JwtDbConfig.ENGINE),
-                                       connection=curr_conn,
-                                       errors=errors,
-                                       logger=logger)
+                    reply: tuple[int] = db_insert(insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE}",
+                                                  insert_data={
+                                                      JwtDbConfig.COL_ACCOUNT: account_id,
+                                                      JwtDbConfig.COL_TOKEN: jwt_token,
+                                                      JwtDbConfig.COL_ALGORITHM:
+                                                          JwtConfig.DEFAULT_ALGORITHM.value,
+                                                      JwtDbConfig.COL_DECODER:
+                                                          b64encode(s=JwtConfig.DECODING_KEY.value).decode()
+                                                  },
+                                                  return_cols={JwtDbConfig.COL_KID: int},
+                                                  engine=DbEngine(JwtDbConfig.ENGINE),
+                                                  connection=curr_conn,
+                                                  errors=errors,
+                                                  logger=logger)
+                    if not errors:
+                        result = reply[0]
+
         # finish the operation
         if not db_conn:
             if errors:
