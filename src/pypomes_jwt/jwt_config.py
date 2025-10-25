@@ -43,7 +43,7 @@ elif not _encoding_key or not _decoding_key:
                                            format=serialization.PublicFormat.SubjectPublicKeyInfo)
 
 
-# HAZARD: instances must be '.value' qualified, as this is not a subclass of either 'StrEnum' or 'IntEnum'
+# HAZARD: instances uses must be '.value' qualified, as this is not a subclass of either 'StrEnum' or 'IntEnum'
 class JwtConfig(Enum):
     """
     Parameters for JWT token issuance.
@@ -66,14 +66,22 @@ del _encoding_key
 del _default_algorithm
 
 
+# database access is not be necessary, if only handling externally provided JWT tokens
 class JwtDbConfig(StrEnum):
     """
     Parameters for JWT database connection.
     """
-    ENGINE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE")
-    TABLE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE")
-    COL_ACCOUNT = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT")
-    COL_ALGORITHM = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM")
-    COL_DECODER = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER")
-    COL_KID = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID")
-    COL_TOKEN = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN")
+    ENGINE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_ENGINE",
+                         def_value="")
+    TABLE = env_get_str(key=f"{APP_PREFIX}_JWT_DB_TABLE",
+                        def_value="")
+    COL_ACCOUNT = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ACCOUNT",
+                              def_value="")
+    COL_ALGORITHM = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_ALGORITHM",
+                                def_value="")
+    COL_DECODER = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_DECODER",
+                              def_value="")
+    COL_KID = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_KID",
+                          def_value="")
+    COL_TOKEN = env_get_str(key=f"{APP_PREFIX}_JWT_DB_COL_TOKEN",
+                            def_value="")
