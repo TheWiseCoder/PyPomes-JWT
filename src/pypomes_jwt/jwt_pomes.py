@@ -52,7 +52,7 @@ def jwt_verify_request(request: Request) -> Response:
     # validate the authorization token
     bad_token: bool = True
     if auth_header and auth_header.startswith("Bearer "):
-        # yes, extract and validate the JWT access token
+        # extract and validate the JWT access token
         token: str = auth_header.split(" ")[1]
         claims: dict[str, Any] = jwt_validate_token(token=token,
                                                     nature="A")
@@ -143,6 +143,7 @@ def jwt_validate_token(token: str,
     then the cryptographic key needed for validation will be obtained from the token database.
     Otherwise, the current decoding key is used.
 
+    Validation operations require access to a database table defined by *JWT_DB_TABLE*.
     On success, return the token's claims (*header* and *payload*), as documented in *jwt_get_claims()*
     On failure, *errors* will contain the reason(s) for rejecting *token*.
 
@@ -224,14 +225,17 @@ def jwt_validate_token(token: str,
                 #   InvalidIssuedAtError: 'iat' claim is non-numeric
                 #   MissingRequiredClaimError: a required claim is not contained in the claimset
                 payload: dict[str, Any] = jwt.decode(jwt=token,
-                                                     options={
-                                                         "verify_signature": True,
-                                                         "verify_exp": True,
-                                                         "verify_nbf": True
-                                                     },
                                                      key=token_decoder,
-                                                     require=["iat", "iss", "exp", "sub"],
-                                                     algorithms=token_alg)
+                                                     algorithms=token_alg,
+                                                     options={
+                                                         "require": ["iat", "iss", "exp", "sub"],
+                                                         "verify_aud": False,
+                                                         "verify_exp": True,
+                                                         "verify_iat": True,
+                                                         "verify_iss": False,
+                                                         "verify_nbf": True,
+                                                         "verify_signature": True
+                                                     })
                 if account_id and payload.get("sub") != account_id:
                     if logger:
                         logger.error(msg=f"Token does not belong to account '{account_id}'")
@@ -499,71 +503,5 @@ def jwt_refresh_tokens(account_id: str,
 
     if errors and logger:
         logger.error(msg="; ".join(errors))
-
-    return result
-
-
-def jwt_get_claims(token: str,
-                   errors: list[str] = None,
-                   logger: Logger = None) -> dict[str, Any] | None:
-    """
-    Retrieve the claims set of a JWT *token*.
-
-    Any well-constructed JWT token may be provided in *token*, as this operation is not restricted
-    to locally issued tokens. Note that neither the token's signature nor its expiration is verified.
-
-    Structure of the returned data, for locally issued tokens:
-      {
-        "header": {
-          "alg": "RS256",
-          "typ": "JWT",
-          "kid": "A1234"
-        },
-        "payload": {
-          "valid-from": <YYYY-MM-DDThh:mm:ss+00:00>
-          "valid-until": <YYYY-MM-DDThh:mm:ss+00:00>
-          "birthdate": "1980-01-01",
-          "email": "jdoe@mail.com",
-          "exp": 1516640454,
-          "iat": 1516239022,
-          "iss": "my_jwt_provider.com",
-          "jti": "Uhsdfgr67FGH567qwSDF33er89retert",
-          "gender": "M",
-          "name": "John Doe",
-          "nbt": 1516249022
-          "sub": "11111111111",
-          "roles": [
-            "administrator",
-            "operator"
-          ]
-        }
-      }
-
-    :param token: the token to be inspected for claims
-    :param errors: incidental error messages
-    :param logger: optional logger
-    :return: the token's claimset, or *None* if error
-    """
-    # initialize the return variable
-    result: dict[str, Any] | None = None
-
-    if logger:
-        logger.debug(msg="Retrieve claims for token")
-
-    try:
-        header: dict[str, Any] = jwt.get_unverified_header(jwt=token)
-        payload: dict[str, Any] = jwt.decode(jwt=token,
-                                             options={"verify_signature": False})
-        result = {
-            "header": header,
-            "payload": payload
-        }
-    except Exception as e:
-        exc_err: str = exc_format(exc=e,
-                                  exc_info=sys.exc_info())
-        if logger:
-            logger.error(msg=f"Error retrieving the token's claimsn: {exc_err}")
-        if isinstance(errors, list):
-            errors.append(exc_err)
 
     return result

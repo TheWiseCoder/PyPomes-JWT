@@ -5,6 +5,7 @@ from base64 import b64encode
 from datetime import datetime, UTC
 from logging import Logger
 from pypomes_core import str_random
+from pypomes_crypto import jwt_get_payload
 from pypomes_db import (
     DbEngine, db_connect, db_commit, db_rollback, db_close,
     db_select, db_insert, db_update, db_delete
@@ -359,8 +360,6 @@ class JwtRegistry:
         :return: the storage id of the inserted token
         :raises RuntimeError: error accessing the token database
         """
-        from .jwt_pomes import jwt_get_claims
-
         # initialize the return variable
         result: int | None = None
 
@@ -392,9 +391,9 @@ class JwtRegistry:
                 for rec in recs:
                     token: str = rec[1]
                     token_id: int = rec[0]
-                    token_payload: dict[str, Any] = (jwt_get_claims(token=token,
+                    token_payload: dict[str, Any] = jwt_get_payload(token=token,
                                                                     errors=errors,
-                                                                    logger=logger) or {}).get("payload")
+                                                                    logger=logger)
                     if errors:
                         break
                     # find expired tokens
