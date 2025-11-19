@@ -49,16 +49,16 @@ class JwtConfig(Enum):
     Parameters for JWT token issuance.
     """
     # recommended: between 5 min and 1 hour (set to 5 min)
-    ACCESS_MAX_AGE: int = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
-                                      def_value=300)
-    ACCOUNT_LIMIT: int = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT",
-                                     def_value=5)
-    DEFAULT_ALGORITHM: JwtAlgorithm = _default_algorithm
-    ENCODING_KEY: bytes = _encoding_key
-    DECODING_KEY: bytes = _decoding_key
+    ACCESS_MAX_AGE = env_get_int(key=f"{APP_PREFIX}_JWT_ACCESS_MAX_AGE",
+                                 def_value=300)
+    ACCOUNT_LIMIT = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT",
+                                def_value=5)
+    DEFAULT_ALGORITHM = _default_algorithm
+    ENCODING_KEY = _encoding_key
+    DECODING_KEY = _decoding_key
     # recommended: at least 2 hours (set to 24 hours)
-    REFRESH_MAX_AGE: int = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
-                                       def_value=86400)
+    REFRESH_MAX_AGE = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
+                                  def_value=86400)
 
 
 del _decoding_key

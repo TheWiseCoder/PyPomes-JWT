@@ -1,6 +1,7 @@
 import jwt
 import sys
 from base64 import b64decode
+from collections.abc import Callable
 from flask import Request, Response, request
 from logging import Logger
 from pypomes_core import exc_format
@@ -17,7 +18,7 @@ from .jwt_registry import JwtRegistry
 __jwt_registry: JwtRegistry = JwtRegistry()
 
 
-def jwt_needed(func: callable) -> callable:
+def jwt_needed(func: Callable) -> Callable:
     """
     Create a decorator to authenticate service endpoints with JWT tokens.
 
@@ -191,13 +192,14 @@ def jwt_validate_token(token: str,
             where_data: dict[str, Any] = {JwtDbConfig.COL_KID: int(token_kid[1:])}
             if account_id:
                 where_data[JwtDbConfig.COL_ACCOUNT] = account_id
-            recs: list[tuple[str]] = db_select(sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM}, "
-                                                        f"{JwtDbConfig.COL_DECODER} "
-                                                        f"FROM {JwtDbConfig.TABLE}",
-                                               where_data=where_data,
-                                               engine=DbEngine(JwtDbConfig.ENGINE),
-                                               errors=errors,
-                                               logger=logger)
+            # noinspection PyTypeChecker
+            recs: list[tuple[str, str]] = db_select(sel_stmt=f"SELECT {JwtDbConfig.COL_ALGORITHM}, "
+                                                             f"{JwtDbConfig.COL_DECODER} "
+                                                             f"FROM {JwtDbConfig.TABLE}",
+                                                    where_data=where_data,
+                                                    engine=DbEngine(JwtDbConfig.ENGINE),
+                                                    errors=errors,
+                                                    logger=logger)
             if recs:
                 token_alg = recs[0][0]
                 token_decoder = b64decode(recs[0][1])
