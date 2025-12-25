@@ -27,7 +27,7 @@ def jwt_needed(func: Callable) -> Callable:
     # ruff: noqa: ANN003 - Missing type annotation for *{name}
     def wrapper(*args, **kwargs) -> Response:
         response: Response = jwt_verify_request(request=request)
-        return response if response else func(*args, **kwargs)
+        return response if response is not None else func(*args, **kwargs)
 
     # prevent a rogue error ("View function mapping is overwriting an existing endpoint function")
     wrapper.__name__ = func.__name__
@@ -70,6 +70,15 @@ def jwt_verify_request(request: Request) -> Response:
     return result
 
 
+def jwt_set_logger(logger: Logger) -> None:
+    """
+    Establish the logger for *JWT* operations.
+
+    :param logger: the logger for *JWT* operations
+    """
+    JwtRegistry.set_logger(logger=logger)
+
+
 def jwt_assert_account(account_id: str) -> bool:
     """
     Determine whether access for *account_id* has been established.
@@ -84,8 +93,7 @@ def jwt_set_account(account_id: str,
                     claims: dict[str, Any],
                     access_max_age: int = JwtConfig.ACCESS_MAX_AGE.value,
                     refresh_max_age: int = JwtConfig.REFRESH_MAX_AGE.value,
-                    lead_interval: int = None,
-                    logger: Logger = None) -> None:
+                    lead_interval: int = None) -> None:
     """
     Establish the data needed to obtain JWT tokens for *account_id*.
 
@@ -99,41 +107,35 @@ def jwt_set_account(account_id: str,
     :param access_max_age: access token duration, in seconds
     :param refresh_max_age: refresh token duration, in seconds
     :param lead_interval: optional time to wait for token to be valid, in seconds
-    :param logger: optional logger
     """
-    if logger:
-        logger.debug(msg=f"Registering account data for '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Registering account data for '{account_id}'")
 
     # register the JWT service
     __jwt_registry.add_account(account_id=account_id,
                                claims=claims,
                                access_max_age=access_max_age,
                                refresh_max_age=max(refresh_max_age, access_max_age + 300),
-                               lead_interval=lead_interval,
-                               logger=logger)
+                               lead_interval=lead_interval)
 
 
-def jwt_remove_account(account_id: str,
-                       logger: Logger = None) -> bool:
+def jwt_remove_account(account_id: str) -> bool:
     """
     Remove from storage the JWT access data for *account_id*.
 
     :param account_id: the account identification
-    :param logger: optional logger
     return: *True* if the access data was removed, *False* otherwise
     """
-    if logger:
-        logger.debug(msg=f"Remove access data for '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Remove access data for '{account_id}'")
 
-    return __jwt_registry.remove_account(account_id=account_id,
-                                         logger=logger)
+    return __jwt_registry.remove_account(account_id=account_id)
 
 
 def jwt_validate_token(token: str,
                        nature: str = None,
                        account_id: str = None,
-                       errors: list[str] = None,
-                       logger: Logger = None) -> dict[str, Any] | None:
+                       errors: list[str] = None) -> dict[str, Any] | None:
     """
     Verify if *token* is a valid JWT token.
 
@@ -152,14 +154,13 @@ def jwt_validate_token(token: str,
     :param nature: prefix identifying the nature of locally issued tokens
     :param account_id: optionally, validate the token's account owner
     :param errors: incidental error messages
-    :param logger: optional logger
     :return: The token's claims (*header* and *payload*) if it is valid, *None* otherwise
     """
     # initialize the return variable
     result: dict[str, Any] | None = None
 
-    if logger:
-        logger.debug(msg="Validate JWT token")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg="Validate JWT token")
 
     # make sure to have an errors list
     if not isinstance(errors, list):
@@ -172,8 +173,8 @@ def jwt_validate_token(token: str,
     except Exception as e:
         exc_err: str = exc_format(exc=e,
                                   exc_info=sys.exc_info())
-        if logger:
-            logger.error(msg=f"Error retrieving the token's header: {exc_err}")
+        if JwtRegistry.LOGGER:
+            JwtRegistry.LOGGER.error(msg=f"Error retrieving the token's header: {exc_err}")
         errors.append(exc_err)
 
     if not errors:
@@ -183,8 +184,8 @@ def jwt_validate_token(token: str,
 
         # retrieve token data from database
         if nature and not (token_kid and token_kid[0:1] == nature):
-            if logger:
-                logger.error(f"Nature of token's 'kid' ('{token_kid}') not '{nature}'")
+            if JwtRegistry.LOGGER:
+                JwtRegistry.LOGGER.error(f"Nature of token's 'kid' ('{token_kid}') not '{nature}'")
             errors.append("Invalid token")
         elif token_kid and len(token_kid) > 1 and \
                 token_kid[0:1] in ["A", "R"] and token_kid[1:].isdigit():
@@ -198,17 +199,16 @@ def jwt_validate_token(token: str,
                                                              f"FROM {JwtDbConfig.TABLE}",
                                                     where_data=where_data,
                                                     engine=DbEngine(JwtDbConfig.ENGINE),
-                                                    errors=errors,
-                                                    logger=logger)
+                                                    errors=errors)
             if recs:
                 token_alg = recs[0][0]
                 token_decoder = b64decode(recs[0][1])
             elif errors:
-                if logger:
-                    logger.error(msg=f"Error retrieving the token's decoder: {'; '.join(errors)}")
+                if JwtRegistry.LOGGER:
+                    JwtRegistry.LOGGER.error(msg=f"Error retrieving the token's decoder: {'; '.join(errors)}")
             else:
-                if logger:
-                    logger.error(msg="Token not in the database")
+                if JwtRegistry.LOGGER:
+                    JwtRegistry.LOGGER.error(msg="Token not in the database")
                 errors.append("Invalid token")
         else:
             token_alg = JwtConfig.DEFAULT_ALGORITHM.value
@@ -239,8 +239,8 @@ def jwt_validate_token(token: str,
                                                          "verify_signature": True
                                                      })
                 if account_id and payload.get("sub") != account_id:
-                    if logger:
-                        logger.error(msg=f"Token does not belong to account '{account_id}'")
+                    if JwtRegistry.LOGGER:
+                        JwtRegistry.LOGGER.error(msg=f"Token does not belong to account '{account_id}'")
                     errors.append("Invalid token")
                 else:
                     result = {
@@ -250,20 +250,19 @@ def jwt_validate_token(token: str,
             except Exception as e:
                 exc_err: str = exc_format(exc=e,
                                           exc_info=sys.exc_info())
-                if logger:
-                    logger.error(msg=f"Error decoding the token: {exc_err}")
+                if JwtRegistry.LOGGER:
+                    JwtRegistry.LOGGER.error(msg=f"Error decoding the token: {exc_err}")
                 errors.append(exc_err)
 
-    if not errors and logger:
-        logger.debug(msg="Token is valid")
+    if not errors and JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg="Token is valid")
 
     return result
 
 
 def jwt_revoke_token(account_id: str,
                      token: str,
-                     errors: list[str] = None,
-                     logger: Logger = None) -> bool:
+                     errors: list[str] = None) -> bool:
     """
     Revoke the *refresh_token* associated with *account_id*.
 
@@ -272,14 +271,13 @@ def jwt_revoke_token(account_id: str,
     :param account_id: the account identification
     :param token: the token to be revoked
     :param errors: incidental error messages
-    :param logger: optional logger
     :return: *True* if operation could be performed, *False* otherwise
     """
     # initialize the return variable
     result: bool = False
 
-    if logger:
-        logger.debug(msg=f"Revoking token of account '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Revoking token of account '{account_id}'")
 
     # make sure to have an errors list
     if not isinstance(errors, list):
@@ -287,8 +285,7 @@ def jwt_revoke_token(account_id: str,
 
     token_claims: dict[str, Any] = jwt_validate_token(token=token,
                                                       account_id=account_id,
-                                                      errors=errors,
-                                                      logger=logger)
+                                                      errors=errors)
     if not errors:
         token_kid: str = token_claims["header"].get("kid")
         if token_kid[0:1] not in ["A", "R"]:
@@ -300,12 +297,11 @@ def jwt_revoke_token(account_id: str,
                           JwtDbConfig.COL_ACCOUNT: account_id
                       },
                       engine=DbEngine(JwtDbConfig.ENGINE),
-                      errors=errors,
-                      logger=logger)
+                      errors=errors)
     if not errors:
         result = True
-    elif logger:
-        logger.error(msg="; ".join(errors))
+    elif JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.error(msg="; ".join(errors))
 
     return result
 
@@ -315,8 +311,7 @@ def jwt_issue_token(account_id: str,
                     duration: int,
                     lead_interval: int = None,
                     claims: dict[str, Any] = None,
-                    errors: list[str] = None,
-                    logger: Logger = None) -> str:
+                    errors: list[str] = None) -> str:
     """
     Issue or refresh, and return, a JWT token associated with *account_id*, of the specified *nature*.
 
@@ -331,30 +326,28 @@ def jwt_issue_token(account_id: str,
     :param claims: optional token's claims
     :param lead_interval: optional interval for the token to become active (in seconds)
     :param errors: incidental error messages
-    :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
     # inicialize the return variable
     result: str | None = None
 
-    if logger:
-        logger.debug(msg=f"Issuing a JWT token for '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Issuing a JWT token for '{account_id}'")
 
     try:
         result = __jwt_registry.issue_token(account_id=account_id,
                                             nature=nature,
                                             duration=duration,
                                             claims=claims,
-                                            lead_interval=lead_interval,
-                                            logger=logger)
-        if logger:
-            logger.debug(msg=f"Token is '{result}'")
+                                            lead_interval=lead_interval)
+        if JwtRegistry.LOGGER:
+            JwtRegistry.LOGGER.debug(msg=f"Token is '{result}'")
     except Exception as e:
         # token issuing failed
         exc_err: str = exc_format(exc=e,
                                   exc_info=sys.exc_info())
-        if logger:
-            logger.error(msg=f"Error issuing the token: {exc_err}")
+        if JwtRegistry.LOGGER:
+            JwtRegistry.LOGGER.error(msg=f"Error issuing the token: {exc_err}")
         if isinstance(errors, list):
             errors.append(exc_err)
 
@@ -363,8 +356,7 @@ def jwt_issue_token(account_id: str,
 
 def jwt_issue_tokens(account_id: str,
                      account_claims: dict[str, Any] = None,
-                     errors: list[str] = None,
-                     logger: Logger = None) -> dict[str, Any]:
+                     errors: list[str] = None) -> dict[str, Any]:
     """
     Issue the JWT token pair associated with *account_id*, for access and refresh operations.
 
@@ -382,27 +374,25 @@ def jwt_issue_tokens(account_id: str,
     :param account_id: the account identification
     :param account_claims: if provided, may supercede currently registered account-related claims
     :param errors: incidental error messages
-    :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
     # inicialize the return variable
     result: dict[str, Any] | None = None
 
-    if logger:
-        logger.debug(msg=f"Issuing a JWT token pair for '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Issuing a JWT token pair for '{account_id}'")
 
     try:
         result = __jwt_registry.issue_tokens(account_id=account_id,
-                                             account_claims=account_claims,
-                                             logger=logger)
-        if logger:
-            logger.debug(msg=f"Token data is '{result}'")
+                                             account_claims=account_claims)
+        if JwtRegistry.LOGGER:
+            JwtRegistry.LOGGER.debug(msg=f"Token data is '{result}'")
     except Exception as e:
         # token issuing failed
         exc_err: str = exc_format(exc=e,
                                   exc_info=sys.exc_info())
-        if logger:
-            logger.error(msg=f"Error issuing the token pair: {exc_err}")
+        if JwtRegistry.LOGGER:
+            JwtRegistry.LOGGER.error(msg=f"Error issuing the token pair: {exc_err}")
         if isinstance(errors, list):
             errors.append(exc_err)
 
@@ -411,8 +401,7 @@ def jwt_issue_tokens(account_id: str,
 
 def jwt_refresh_tokens(account_id: str,
                        refresh_token: str,
-                       errors: list[str] = None,
-                       logger: Logger = None) -> dict[str, Any]:
+                       errors: list[str] = None) -> dict[str, Any]:
     """
     Refresh the JWT token pair associated with *account_id*, for access and refresh operations.
 
@@ -429,14 +418,13 @@ def jwt_refresh_tokens(account_id: str,
     :param errors: incidental error messages
     :param account_id: the account identification
     :param refresh_token: the base refresh token
-    :param logger: optional logger
     :return: the JWT token data, or *None* if error
     """
     # inicialize the return variable
     result: dict[str, Any] | None = None
 
-    if logger:
-        logger.debug(msg=f"Refreshing a JWT token pair for '{account_id}'")
+    if JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.debug(msg=f"Refreshing a JWT token pair for '{account_id}'")
 
     # make sure to have an errors list
     if not isinstance(errors, list):
@@ -448,8 +436,7 @@ def jwt_refresh_tokens(account_id: str,
         token_claims: dict[str, Any] = jwt_validate_token(token=refresh_token,
                                                           nature="R",
                                                           account_id=account_id,
-                                                          errors=errors,
-                                                          logger=logger)
+                                                          errors=errors)
         if token_claims:
             # yes, proceed
             token_kid: str = token_claims["header"].get("kid")
@@ -457,8 +444,7 @@ def jwt_refresh_tokens(account_id: str,
             # start the database transaction
             db_conn: Any = db_connect(autocommit=False,
                                       engine=DbEngine(JwtDbConfig.ENGINE),
-                                      errors=errors,
-                                      logger=logger)
+                                      errors=errors)
             if db_conn:
                 # delete current refresh token
                 db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig.TABLE}",
@@ -469,41 +455,36 @@ def jwt_refresh_tokens(account_id: str,
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=db_conn,
                           committable=False,
-                          errors=errors,
-                          logger=logger)
+                          errors=errors)
 
                 # issue the token pair
                 if not errors:
                     try:
                         result = __jwt_registry.issue_tokens(account_id=account_id,
                                                              account_claims=token_claims.get("payload"),
-                                                             db_conn=db_conn,
-                                                             logger=logger)
-                        if logger:
-                            logger.debug(msg=f"Token pair was refreshed for account '{account_id}'")
+                                                             db_conn=db_conn)
+                        if JwtRegistry.LOGGER:
+                            JwtRegistry.LOGGER.debug(msg=f"Token pair was refreshed for account '{account_id}'")
                     except Exception as e:
                         # token issuing failed
                         exc_err: str = exc_format(exc=e,
                                                   exc_info=sys.exc_info())
-                        if logger:
-                            logger.error(msg=f"Error refreshing the token pair: {exc_err}")
+                        if JwtRegistry.LOGGER:
+                            JwtRegistry.LOGGER.error(msg=f"Error refreshing the token pair: {exc_err}")
                         errors.append(exc_err)
 
                 # wrap-up the transaction
                 if errors:
-                    db_rollback(connection=db_conn,
-                                logger=logger)
+                    db_rollback(connection=db_conn)
                 else:
                     db_commit(connection=db_conn,
-                              errors=errors,
-                              logger=logger)
-                db_close(connection=db_conn,
-                         logger=logger)
+                              errors=errors)
+                db_close(connection=db_conn)
     else:
         # refresh token not found
         errors.append("Refresh token was not provided")
 
-    if errors and logger:
-        logger.error(msg="; ".join(errors))
+    if errors and JwtRegistry.LOGGER:
+        JwtRegistry.LOGGER.error(msg="; ".join(errors))
 
     return result

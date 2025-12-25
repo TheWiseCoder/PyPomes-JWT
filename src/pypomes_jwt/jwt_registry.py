@@ -76,10 +76,13 @@ class JwtRegistry:
     If issued by the local server, "kid" holds the key to the corresponding record in the token database,
     if starting with *A* for (*Access*) or *R* (for *Refresh*), followed an integer.
     """
+    LOGGER: Logger | None = None
+
     def __init__(self) -> None:
         """
         Initizalize the token access data.
         """
+        # instance variables
         self.access_lock: Lock = Lock()
         self.access_registry: dict[str, Any] = {}
 
@@ -88,8 +91,7 @@ class JwtRegistry:
                     claims: dict[str, Any],
                     access_max_age: int,
                     refresh_max_age: int,
-                    lead_interval: int | None,
-                    logger: Logger = None) -> None:
+                    lead_interval: int | None) -> None:
         """
         Add to storage the parameters needed to produce and validate JWT tokens for *account_id*.
 
@@ -102,7 +104,6 @@ class JwtRegistry:
         :param access_max_age: access token duration, in seconds (at least 60 seconds)
         :param refresh_max_age: refresh token duration, in seconds (greater than *access_max_age*)
         :param lead_interval: time to wait for token to be valid, in seconds
-        :param logger: optional logger
         """
         # build and store the access data for the account
         with self.access_lock:
@@ -113,19 +114,17 @@ class JwtRegistry:
                     "lead-interval": lead_interval,
                     "claims": claims or {}
                 }
-                if logger:
-                    logger.debug(f"JWT data added for '{account_id}'")
-            elif logger:
-                logger.warning(f"JWT data already exists for '{account_id}'")
+                if JwtRegistry.LOGGER:
+                    JwtRegistry.LOGGER.debug(f"JWT data added for '{account_id}'")
+            elif JwtRegistry.LOGGER:
+                JwtRegistry.LOGGER.warning(f"JWT data already exists for '{account_id}'")
 
     def remove_account(self,
-                       account_id: str,
-                       logger: Logger) -> bool:
+                       account_id: str) -> bool:
         """
         Remove from storage the access data for *account_id*.
 
         :param account_id: the account identification
-        :param logger: optional logger
         return: *True* if the access data was removed, *False* otherwise
         """
         # remove from internal storage
@@ -136,13 +135,12 @@ class JwtRegistry:
         # remove from database
         db_delete(delete_stmt=f"DELETE FROM {JwtDbConfig}",
                   where_data={JwtDbConfig.COL_ACCOUNT: account_id},
-                  engine=DbEngine(JwtDbConfig.ENGINE),
-                  logger=logger)
-        if logger:
+                  engine=DbEngine(JwtDbConfig.ENGINE))
+        if JwtRegistry.LOGGER:
             if account_data:
-                logger.debug(f"Removed JWT data for '{account_id}'")
+                JwtRegistry.LOGGER.debug(f"Removed JWT data for '{account_id}'")
             else:
-                logger.warning(f"No JWT data found for '{account_id}'")
+                JwtRegistry.LOGGER.warning(f"No JWT data found for '{account_id}'")
 
         return account_data is not None
 
@@ -151,8 +149,7 @@ class JwtRegistry:
                     nature: str,
                     duration: int,
                     lead_interval: int = None,
-                    claims: dict[str, Any] = None,
-                    logger: Logger = None) -> str:
+                    claims: dict[str, Any] = None) -> str:
         """
         Issue an return a JWT token associated with *account_id*.
 
@@ -166,7 +163,6 @@ class JwtRegistry:
         :param duration: the number of seconds for the token to remain valid (at least 60 seconds)
         :param claims: optional token's claims
         :param lead_interval: optional interval for the token to become active (in seconds)
-        :param logger: optional logger
         :return: the JWT token
         :raises RuntimeError: invalid parameter
         """
@@ -178,13 +174,12 @@ class JwtRegistry:
         elif not isinstance(duration, int) or duration < 60:
             err_msg = f"Invalid duration '{duration}'"
         if err_msg:
-            if logger:
-                logger.error(err_msg)
+            if JwtRegistry.LOGGER:
+                JwtRegistry.LOGGER.error(err_msg)
             raise RuntimeError(err_msg)
 
         # obtain the account data in storage (may raise an exception)
-        account_data: dict[str, Any] = self.get_account_data(account_id=account_id,
-                                                             logger=logger)
+        account_data: dict[str, Any] = self.get_account_data(account_id=account_id)
         # issue the token
         current_claims: dict[str, Any] = {}
         iss: str = account_data["claims"].get("iss")
@@ -211,8 +206,7 @@ class JwtRegistry:
     def issue_tokens(self,
                      account_id: str,
                      account_claims: dict[str, Any] = None,
-                     db_conn: Any = None,
-                     logger: Logger = None) -> dict[str, Any]:
+                     db_conn: Any = None) -> dict[str, Any]:
         """
         Issue and return a JWT token pair associated with *account_id*.
 
@@ -233,14 +227,12 @@ class JwtRegistry:
         :param account_id: the account identification
         :param account_claims: if provided, may supercede registered account-related claims
         :param db_conn: if provided, indicates that this operation is part of a larger database transaction
-        :param logger: optional logger
         :return: the JWT token data
         :raises RuntimeError: invalid account id, or error accessing the token database
         """
         # process the account data in storage
         with (self.access_lock):
-            account_data: dict[str, Any] = self.get_account_data(account_id=account_id,
-                                                                 logger=logger)
+            account_data: dict[str, Any] = self.get_account_data(account_id=account_id)
             current_claims: dict[str, Any] = account_data["claims"].copy()
             if account_claims:
                 current_claims.update(account_claims)
@@ -266,14 +258,12 @@ class JwtRegistry:
             # make sure to have a database connection
             curr_conn: Any = db_conn or db_connect(autocommit=False,
                                                    engine=DbEngine(JwtDbConfig.ENGINE),
-                                                   errors=errors,
-                                                   logger=logger)
+                                                   errors=errors)
             if curr_conn:
                 # persist the candidate token (may raise an exception)
-                token_id: int = JwtRegistry.jwt_persist_token(account_id=account_id,
-                                                              jwt_token=refresh_token,
-                                                              db_conn=curr_conn,
-                                                              logger=logger)
+                token_id: int = JwtRegistry.persist_token(account_id=account_id,
+                                                          jwt_token=refresh_token,
+                                                          db_conn=curr_conn)
                 # issue the definitive refresh token
                 refresh_token = jwt.encode(payload=current_claims,
                                            key=JwtConfig.ENCODING_KEY.value,
@@ -285,18 +275,15 @@ class JwtRegistry:
                           where_data={JwtDbConfig.COL_KID: token_id},
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=curr_conn,
-                          errors=errors,
-                          logger=logger)
+                          errors=errors)
 
                 # wrap-up the transaction
                 if not db_conn:
                     if errors:
-                        db_rollback(connection=curr_conn,
-                                    logger=logger)
+                        db_rollback(connection=curr_conn)
                     else:
                         db_commit(connection=curr_conn,
-                                  errors=errors,
-                                  logger=logger)
+                                  errors=errors)
                     db_close(connection=curr_conn)
 
             if errors:
@@ -338,10 +325,18 @@ class JwtRegistry:
         return result
 
     @staticmethod
-    def jwt_persist_token(account_id: str,
-                          jwt_token: str,
-                          db_conn: Any = None,
-                          logger: Logger = None) -> int:
+    def set_logger(logger: Logger) -> None:
+        """
+        Establish the class logger.
+
+        :param logger: the class logger
+        """
+        JwtRegistry.LOGGER = logger
+
+    @staticmethod
+    def persist_token(account_id: str,
+                      jwt_token: str,
+                      db_conn: Any = None) -> int:
         """
         Persist the given token, making sure that the account limit is complied with.
 
@@ -356,7 +351,6 @@ class JwtRegistry:
         :param account_id: the account identification
         :param jwt_token: the JWT token to persist
         :param db_conn: the database connection to use
-        :param logger: optional logger
         :return: the storage id of the inserted token
         :raises RuntimeError: error accessing the token database
         """
@@ -367,8 +361,7 @@ class JwtRegistry:
         errors: list[str] = []
         curr_conn: Any = db_conn or db_connect(autocommit=False,
                                                engine=DbEngine(JwtDbConfig.ENGINE),
-                                               errors=errors,
-                                               logger=logger)
+                                               errors=errors)
         if not errors:
             # retrieve the account's tokens
             # noinspection PyTypeChecker
@@ -378,11 +371,11 @@ class JwtRegistry:
                           where_data={JwtDbConfig.COL_ACCOUNT: account_id},
                           engine=DbEngine(JwtDbConfig.ENGINE),
                           connection=curr_conn,
-                          errors=errors,
-                          logger=logger)
+                          errors=errors)
             if not errors:
-                if logger:
-                    logger.debug(msg=f"Retrieved {len(recs)} tokens from storage for account '{account_id}'")
+                if JwtRegistry.LOGGER:
+                    JwtRegistry.LOGGER.debug(msg=f"Retrieved {len(recs)} tokens "
+                                                 f"from storage for account '{account_id}'")
                 # process expired tokens
                 just_now: int = int(datetime.now(tz=UTC).timestamp())
                 oldest_ts: int = sys.maxsize
@@ -392,8 +385,7 @@ class JwtRegistry:
                     token: str = rec[1]
                     token_id: int = rec[0]
                     token_payload: dict[str, Any] = jwt_get_payload(token=token,
-                                                                    errors=errors,
-                                                                    logger=logger)
+                                                                    errors=errors)
                     if errors:
                         break
                     # find expired tokens
@@ -413,11 +405,10 @@ class JwtRegistry:
                               where_data={JwtDbConfig.COL_KID: expired},
                               engine=DbEngine(JwtDbConfig.ENGINE),
                               connection=curr_conn,
-                              errors=errors,
-                              logger=logger)
-                    if not errors and logger:
-                        logger.debug(msg=f"{len(expired)} tokens of account "
-                                         f"'{account_id}' removed from storage")
+                              errors=errors)
+                    if not errors and JwtRegistry.LOGGER:
+                        JwtRegistry.LOGGER.debug(msg=f"{len(expired)} tokens of account "
+                                                     f"'{account_id}' removed from storage")
 
                 if not errors and 0 < JwtConfig.ACCOUNT_LIMIT.value <= len(recs) - len(expired):
                     # delete the oldest token to make way for the new one
@@ -425,11 +416,10 @@ class JwtRegistry:
                               where_data={JwtDbConfig.COL_KID: oldest_id},
                               engine=DbEngine(JwtDbConfig.ENGINE),
                               connection=curr_conn,
-                              errors=errors,
-                              logger=logger)
-                    if not errors and logger:
-                        logger.debug(msg="Oldest active token of account "
-                                         f"'{account_id}' removed from storage")
+                              errors=errors)
+                    if not errors and JwtRegistry.LOGGER:
+                        JwtRegistry.LOGGER.debug(msg="Oldest active token of account "
+                                                     f"'{account_id}' removed from storage")
                 # persist token
                 if not errors:
                     reply: tuple[int] = db_insert(insert_stmt=f"INSERT INTO {JwtDbConfig.TABLE}",
@@ -444,8 +434,7 @@ class JwtRegistry:
                                                   return_cols={JwtDbConfig.COL_KID: int},
                                                   engine=DbEngine(JwtDbConfig.ENGINE),
                                                   connection=curr_conn,
-                                                  errors=errors,
-                                                  logger=logger)
+                                                  errors=errors)
                     if not errors:
                         result = reply[0]
 
