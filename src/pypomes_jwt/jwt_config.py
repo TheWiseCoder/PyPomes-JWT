@@ -20,27 +20,27 @@ class JwtAlgorithm(StrEnum):
 
 
 # recommended: allow the encode and decode keys to be generated anew when app starts
-_encoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODING_KEY",
-                                     encoding="base64")
-_decoding_key: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_DECODING_KEY")
+_encoding_secret: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_ENCODING_SECRET",
+                                        encoding="base64")
+_decoding_secret: bytes = env_get_bytes(key=f"{APP_PREFIX}_JWT_DECODING_SECRET")
 # default algorithm may cause encode and decode keys to be overriden
 _default_algorithm: JwtAlgorithm = env_get_enum(key=f"{APP_PREFIX}_JWT_DEFAULT_ALGORITHM",
                                                 enum_class=JwtAlgorithm,
                                                 def_value=JwtAlgorithm.RS256)
 if _default_algorithm in [JwtAlgorithm.HS256, JwtAlgorithm.HS512]:
-    if not _encoding_key:
-        _encoding_key = token_bytes(nbytes=32)
-    _decoding_key = _encoding_key
-elif not _encoding_key or not _decoding_key:
+    if not _encoding_secret:
+        _encoding_secret = token_bytes(nbytes=32)
+    _decoding_secret = _encoding_secret
+elif not _encoding_secret or not _decoding_secret:
     __priv_key: RSAPrivateKey = rsa.generate_private_key(public_exponent=65537,
                                                          key_size=2048
                                                          if _default_algorithm == JwtAlgorithm.RS256 else 4096)
-    _encoding_key = __priv_key.private_bytes(encoding=serialization.Encoding.PEM,
-                                             format=serialization.PrivateFormat.PKCS8,
-                                             encryption_algorithm=serialization.NoEncryption())
+    _encoding_secret = __priv_key.private_bytes(encoding=serialization.Encoding.PEM,
+                                                format=serialization.PrivateFormat.PKCS8,
+                                                encryption_algorithm=serialization.NoEncryption())
     __pub_key: RSAPublicKey = __priv_key.public_key()
-    _decoding_key = __pub_key.public_bytes(encoding=serialization.Encoding.PEM,
-                                           format=serialization.PublicFormat.SubjectPublicKeyInfo)
+    _decoding_secret = __pub_key.public_bytes(encoding=serialization.Encoding.PEM,
+                                              format=serialization.PublicFormat.SubjectPublicKeyInfo)
 
 
 # HAZARD: instances uses must be '.value' qualified, as this is not a subclass of either 'StrEnum' or 'IntEnum'
@@ -54,15 +54,15 @@ class JwtConfig(Enum):
     ACCOUNT_LIMIT = env_get_int(key=f"{APP_PREFIX}_JWT_ACCOUNT_LIMIT",
                                 def_value=5)
     DEFAULT_ALGORITHM = _default_algorithm
-    ENCODING_KEY = _encoding_key
-    DECODING_KEY = _decoding_key
+    ENCODING_KEY = _encoding_secret
+    DECODING_KEY = _decoding_secret
     # recommended: at least 2 hours (set to 24 hours)
     REFRESH_MAX_AGE = env_get_int(key=f"{APP_PREFIX}_JWT_REFRESH_MAX_AGE",
                                   def_value=86400)
 
 
-del _decoding_key
-del _encoding_key
+del _decoding_secret
+del _encoding_secret
 del _default_algorithm
 
 

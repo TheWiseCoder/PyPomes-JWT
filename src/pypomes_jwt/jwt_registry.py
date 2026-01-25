@@ -7,7 +7,8 @@ from logging import Logger
 from pypomes_core import str_random
 from pypomes_crypto import jwt_get_payload
 from pypomes_db import (
-    DbEngine, db_connect, db_commit, db_rollback, db_close,
+    DbEngine,
+    db_connect, db_commit, db_rollback, db_close,
     db_select, db_insert, db_update, db_delete
 )
 from threading import Lock

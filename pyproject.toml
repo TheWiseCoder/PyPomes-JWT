@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypomes_jwt"
-version = "1.4.3"
+version = "1.4.4"
 authors = [
   { name="GT Nunes", email="wisecoder01@gmail.com" }
 ]
@@ -22,8 +22,8 @@ dependencies = [
     "cryptography>=46.0.3",
     "Flask>=3.1.2",
     "PyJWT>=2.10.1",
-    "pypomes_core>=2.9.4",
-    "pypomes_crypto>=0.8.6",
+    "pypomes_core>=3.0.8",
+    "pypomes_crypto>=0.8.7",
     "pypomes_db>=2.8.7"
 ]
 
